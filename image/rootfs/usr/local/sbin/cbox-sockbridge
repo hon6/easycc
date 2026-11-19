@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""容器内的转发服务（root 运行）：
+1. 固定服务：管理后台、浏览器桌面、SSH 各开一个 unix 套接字（/run/cbox/sock/*.sock），转到本机端口。
+   Apple container 用 --publish-socket 经 vsock 带到宿主机，不受 macOS「本地网络」权限影响。
+2. 隧道（unix 套接字 tunnel.sock + TCP 7682）：电脑上的客户端用它把环境里的开发服务端口（如 3000）
+   转到电脑的 localhost。每个连接先发一行：
+     <令牌> LIST\\n            → 回一行 JSON：环境里正在监听的端口 [{port, proc}]
+     <令牌> CONNECT <端口>\\n  → 回 OK\\n，之后双向转发到 127.0.0.1:<端口>
+   令牌是 ADMIN_TOKEN，别的容器连不进来。
+3. 访问本机（授权后）：防火墙把发往 host.internal 的 TCP 透明转到这里（127.0.0.1:7683），
+   这里取出原目标端口，连电脑端中转（宿主机 IP:HOST_RELAY_PORT，带令牌），由它连电脑本机的 localhost:端口。"""
+import asyncio
+import hmac
+import json
+import os
+import re
+import socket
+import struct
+import subprocess
+
+DIR = os.environ.get("CBOX_SOCK_DIR", "/run/cbox/sock")
+FIXED = {"admin": 7681, "vnc": 6080, "ssh": 22}
+TUNNEL_PORT = int(os.environ.get("CBOX_TUNNEL_PORT", "7682"))
+TOKEN = os.environ.get("ADMIN_TOKEN", "")
+HOST_RELAY_PORT = int(os.environ.get("HOST_RELAY_PORT") or 0)
+HOSTIP_FILE = "/run/cbox/hostip"      # cbox-hostaccess 写：电脑（宿主机）在环境里看到的地址
+# 内部端口不往外转：SSH、VNC、noVNC、管理后台、隧道、mihomo（代理 / 透明转发 / DNS / 控制）、Kiteline
+INTERNAL = {22, 53, 1053, 5901, 6080, 7681, 7682, 7683, 7890, 7892, 9090} | set(range(8765, 8771))   # 8765–8770 Kiteline
+
+
+async def pipe(r, w):
+    try:
+        while True:
+            data = await r.read(65536)
+            if not data:
+                break
+            w.write(data)
+            await w.drain()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        try:
+            w.close()
+        except OSError:
+            pass
+
+
+def fixed_handler(port):
+    async def handle(r, w):
+        try:
+            tr, tw = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            w.close()
+            return
+        await asyncio.gather(pipe(r, tw), pipe(tr, w))
+    return handle
+
+
+def net_info():
+    """默认网关（Apple container / Linux Docker 下就是宿主机）和本机地址"""
+    gw = ip = ""
+    try:
+        for line in open("/proc/net/route"):
+            f = line.split()
+            if len(f) > 2 and f[1] == "00000000" and f[0] != "Iface":
+                gw = socket.inet_ntoa(struct.pack("<L", int(f[2], 16)))
+                break
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True, timeout=3).stdout
+        m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", out)
+        ip = m.group(1) if m else ""
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return gw, ip
+
+
+def listening_ports():
+    """环境里正在监听、本机能连到的 TCP 端口（带进程名）"""
+    try:
+        out = subprocess.run(["ss", "-Hltnp"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    ports = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        local = parts[3]
+        m = re.match(r"^(.*):(\d+)$", local)
+        if not m:
+            continue
+        addr, port = m.group(1).strip("[]"), int(m.group(2))
+        # 只要本机地址能连到的：127.0.0.1、0.0.0.0、::、::1、*（只绑在别的网卡上的不算）
+        if addr not in ("127.0.0.1", "0.0.0.0", "::", "::1", "*") or port in INTERNAL:
+            continue
+        pm = re.search(r'users:\(\("([^"]+)"', line)
+        ports[port] = pm.group(1) if pm else ""
+    return [{"port": p, "proc": ports[p]} for p in sorted(ports)]
+
+
+async def tunnel(r, w):
+    try:
+        line = (await asyncio.wait_for(r.readline(), 10)).decode(errors="replace").strip()
+    except (asyncio.TimeoutError, ConnectionError, OSError):
+        w.close()
+        return
+    parts = line.split()
+    if len(parts) < 2 or not TOKEN or not hmac.compare_digest(parts[0], TOKEN):
+        w.close()
+        return
+    if parts[1] == "LIST":
+        gw, ip = net_info()
+        w.write((json.dumps({"ports": listening_ports(), "gateway": gw, "ip": ip}) + "\n").encode())
+        await w.drain()
+        w.close()
+        return
+    if parts[1] == "CONNECT" and len(parts) == 3 and parts[2].isdigit():
+        port = int(parts[2])
+        if port in INTERNAL or not 1 <= port <= 65535:
+            w.close()
+            return
+        try:
+            tr, tw = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            try:  # 有的开发服务只监听 IPv6 回环
+                tr, tw = await asyncio.open_connection("::1", port)
+            except OSError:
+                w.close()
+                return
+        w.write(b"OK\n")
+        await w.drain()
+        await asyncio.gather(pipe(r, tw), pipe(tr, w))
+        return
+    w.close()
+
+
+async def host_relay(r, w):
+    """访问本机：被透明转到这里的连接 → 电脑端中转 → 电脑本机 localhost:原端口"""
+    sock = w.get_extra_info("socket")
+    try:
+        dst = sock.getsockopt(socket.SOL_IP, 80, 16)   # SO_ORIGINAL_DST
+        port = struct.unpack("!H", dst[2:4])[0]
+        host = open(HOSTIP_FILE).read().strip()
+        if not HOST_RELAY_PORT or not host:
+            raise OSError("没有授权访问本机")
+        hr, hw = await asyncio.wait_for(asyncio.open_connection(host, HOST_RELAY_PORT), 8)
+        hw.write(("%s %d\n" % (TOKEN, port)).encode())
+        await hw.drain()
+        ok = await asyncio.wait_for(hr.readline(), 8)
+        if ok.strip() != b"OK":
+            raise OSError("本机 %d 端口连不上" % port)
+    except (OSError, asyncio.TimeoutError, struct.error):
+        w.close()
+        return
+    await asyncio.gather(pipe(r, hw), pipe(hr, w))
+
+
+async def main():
+    os.makedirs(DIR, exist_ok=True)
+    servers = []
+    for name, port in FIXED.items():
+        path = os.path.join(DIR, name + ".sock")
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        servers.append(await asyncio.start_unix_server(fixed_handler(port), path=path))
+        os.chmod(path, 0o660)
+    tpath = os.path.join(DIR, "tunnel.sock")
+    try:
+        os.remove(tpath)
+    except FileNotFoundError:
+        pass
+    servers.append(await asyncio.start_unix_server(tunnel, path=tpath))
+    os.chmod(tpath, 0o660)
+    # Docker 等运行时：隧道走 TCP（发布到宿主机 127.0.0.1）
+    servers.append(await asyncio.start_server(tunnel, "0.0.0.0", TUNNEL_PORT))
+    servers.append(await asyncio.start_server(host_relay, "127.0.0.1", 7683))
+    await asyncio.gather(*(s.serve_forever() for s in servers))
+
+
+asyncio.run(main())

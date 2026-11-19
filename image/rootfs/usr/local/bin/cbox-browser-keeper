@@ -1,0 +1,33 @@
+#!/bin/bash
+# 保持环境浏览器开着：关掉或崩溃后自动重新打开（像指纹浏览器的窗口，打开桌面看到的总是浏览器）
+export DISPLAY="${DISPLAY:-:1}"
+[ -f /etc/profile.d/cbox-env.sh ] && . /etc/profile.d/cbox-env.sh
+if [ "$(id -un)" = root ]; then exec runuser -u dev -- "$0" "$@"; fi
+. /usr/local/lib/cbox/browser.sh
+# 只跑一份
+exec 9>"/tmp/.cbox-browser-keeper.lock"; flock -n 9 || exit 0
+mkdir -p "$HOME/.cache"; LOGF="$HOME/.cache/easycc-browser.log"
+fails=0
+while [ -S "/tmp/.X11-unix/X${DISPLAY#:}" ]; do
+  E="$(cbox_engine)"
+  if ! pgrep -u "$(id -u)" -f "$(cbox_browser_pat "$E")" >/dev/null; then
+    t=$(date +%s)
+    # 每次启动前重新读一遍：出口变了以后时区 / 代理设置是新的（循环本身开着很久，环境变量是旧的）
+    [ -f /etc/profile.d/cbox-env.sh ] && . /etc/profile.d/cbox-env.sh
+    echo "[$(date '+%F %T')] 启动 $E（时区 ${TZ:-系统}）" >>"$LOGF"
+    pgrep -u "$(id -u)" -f '/usr/lib/firefox/firefox-bin|/opt/google/chrome/chrome( |$)' >/dev/null || cbox_clear_locks
+    if [ "$E" = chrome ]; then
+      first=""; [ -d "$HOME/.config/google-chrome/Default" ] || first="file:///run/cbox/status.html"
+      cbox_chrome $first >>"$LOGF" 2>&1
+      # 容器不让用 Chrome 的沙箱（没有用户命名空间、setuid 被禁）：以后都不用沙箱启动（容器本身就是隔离）
+      if [ $(( $(date +%s) - t )) -lt 10 ] && [ ! -f "$HOME/.cache/easycc-chrome-nosandbox" ] && tail -20 "$LOGF" | grep -qi "no usable sandbox"; then
+        touch "$HOME/.cache/easycc-chrome-nosandbox"; echo "[$(date '+%F %T')] 容器里用不了 Chrome 沙箱，改为不用沙箱启动" >>"$LOGF"
+      fi
+    else
+      firefox >>"$LOGF" 2>&1
+    fi
+    if [ $(( $(date +%s) - t )) -lt 10 ]; then fails=$((fails+1)); else fails=0; fi
+    if [ "$fails" -ge 5 ]; then echo "[$(date '+%F %T')] 连续崩溃，30 秒后再试" >>"$LOGF"; sleep 30; fails=0; fi
+  fi
+  sleep 2
+done

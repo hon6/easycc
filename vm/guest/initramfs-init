@@ -1,0 +1,11 @@
+#!/bin/busybox sh
+# easyCC 虚拟机的启动盘：加载磁盘驱动，挂上根文件系统，交给 /sbin/easycc-vm-init
+/bin/busybox --install -s /bin
+mount -t proc proc /proc; mount -t sysfs sysfs /sys; mount -t devtmpfs devtmpfs /dev
+for m in virtio_blk crc32c_generic ext4; do modprobe -q $m; done
+i=0; while [ ! -b /dev/vda ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
+mkdir -p /newroot
+mount -t ext4 -o rw /dev/vda /newroot || { echo "挂载根文件系统失败"; exec sh; }
+mount --move /dev /newroot/dev 2>/dev/null
+umount /proc /sys 2>/dev/null
+exec switch_root /newroot /sbin/easycc-vm-init

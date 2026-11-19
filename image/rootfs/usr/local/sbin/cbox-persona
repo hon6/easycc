@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""每个环境一台「不一样的机器」（root，启动时由 cbox-init 调）。不伪造任何值：网站和程序读到的都是这个环境里真实生效的设置。
+种子 FP_SEED 在 /etc/cbox/config.env（easycc 创建环境时随机生成，一直不变）；没有就用实例名推一个。由它定：
+  - machine-id（/etc/machine-id、/var/lib/dbus/machine-id）
+  - 主机名（Apple container 不能从外面指定，在这里设；Docker / Podman 启动时已经指定了同样的名字）
+  - 字体：镜像里的一批常见免费字体，每个环境启用其中一部分，默认的无衬线 / 衬线 / 等宽字体也各选一款
+  - 字体渲染：微调强度、抗锯齿方式（Canvas 画出来的文字因此不同）
+网卡 MAC 由 easycc 启动容器时按同一个种子指定。结果写到 /run/cbox/persona.json。"""
+import hashlib
+import json
+import os
+import random
+import re
+import subprocess
+
+CONF = "/etc/cbox/config.env"
+# 始终保留：兜底字体、中日韩文字、表情（去掉网页会显示不出来）
+KEEP = re.compile(r"^(DejaVu|Noto (Sans|Serif|Sans Mono) CJK|Noto Color Emoji)", re.I)
+SANS = ["Liberation Sans", "Roboto", "Open Sans", "Lato", "Ubuntu", "Inter", "Cantarell", "Noto Sans", "FreeSans", "DejaVu Sans"]
+SERIF = ["Liberation Serif", "Noto Serif", "Caladea", "FreeSerif", "TeX Gyre Termes", "DejaVu Serif"]
+MONO = ["Liberation Mono", "Ubuntu Mono", "Fira Code", "JetBrains Mono", "Hack", "Noto Sans Mono", "DejaVu Sans Mono"]
+
+
+def conf_get(key):
+    try:
+        for line in open(CONF, encoding="utf-8"):
+            m = re.match(r"^%s=['\"]?([^'\"\n]*)" % key, line)
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return ""
+
+
+def main():
+    seed = conf_get("FP_SEED") or hashlib.md5(("easycc-" + os.environ.get("INSTANCE", "env")).encode()).hexdigest()
+    rnd = random.Random(seed)
+    out = {}
+
+    # machine-id：由种子定（换了镜像版本也不变）
+    mid = hashlib.sha256(("machine-id:" + seed).encode()).hexdigest()[:32]
+    for p in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            if os.path.islink(p):
+                os.unlink(p)
+            with open(p, "w") as f:
+                f.write(mid + "\n")
+            os.chmod(p, 0o444)
+        except OSError:
+            pass
+    out["machineId"] = mid
+
+    # 主机名：和 easycc 里 persona_host 一样（ubuntu-种子第 13–18 位）
+    host = "ubuntu-" + seed[12:18]
+    try:
+        with open("/etc/hostname", "w") as f:
+            f.write(host + "\n")
+        subprocess.run(["hostname", host], capture_output=True, timeout=5)
+        hosts = open("/etc/hosts").read()
+        if not re.search(r"^127\.0\.1\.1\s", hosts, re.M):
+            hosts += "127.0.1.1\t%s\n" % host
+        else:
+            hosts = re.sub(r"^127\.0\.1\.1\s.*$", "127.0.1.1\t%s" % host, hosts, flags=re.M)
+        open("/etc/hosts", "w").write(hosts)
+    except OSError:
+        pass
+    out["hostname"] = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+
+    # 字体：列出镜像里有的字体族，除了始终保留的，每族以 60% 的概率启用
+    fams = set()
+    p = subprocess.run(["fc-list", "--format", "%{family[0]}\n"], capture_output=True, text=True)
+    for line in p.stdout.splitlines():
+        if line.strip():
+            fams.add(line.strip())
+    optional = sorted(f for f in fams if not KEEP.match(f))
+    enabled = [f for f in optional if rnd.random() < 0.6]
+    rejected = [f for f in optional if f not in enabled]
+    avail = set(enabled) | {f for f in fams if KEEP.match(f)}
+
+    def pick(cands):
+        c = [f for f in cands if f in avail]
+        return rnd.choice(c) if c else cands[-1]
+
+    sans, serif, mono = pick(SANS), pick(SERIF), pick(MONO)
+    hint = rnd.choice(["hintslight", "hintslight", "hintmedium", "hintfull", "hintnone"])
+    rgba = rnd.choice(["none", "none", "rgb"])
+    lcd = "lcddefault" if rgba == "rgb" else "lcdnone"
+    x = ['<?xml version="1.0"?>', '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">',
+         "<!-- easyCC：这个环境的字体组合和渲染方式（cbox-persona 按 FP_SEED 生成，不要手改） -->", "<fontconfig>"]
+    if rejected:
+        x.append("  <selectfont><rejectfont>")
+        for f in rejected:
+            x.append('    <pattern><patelt name="family"><string>%s</string></patelt></pattern>' % f.replace("&", "&amp;"))
+        x.append("  </rejectfont></selectfont>")
+    for generic, fam in (("sans-serif", sans), ("serif", serif), ("monospace", mono)):
+        x.append("  <alias binding=\"strong\"><family>%s</family><prefer><family>%s</family></prefer></alias>" % (generic, fam))
+    x += ['  <match target="font">',
+          '    <edit name="antialias" mode="assign"><bool>true</bool></edit>',
+          '    <edit name="hinting" mode="assign"><bool>%s</bool></edit>' % ("false" if hint == "hintnone" else "true"),
+          '    <edit name="hintstyle" mode="assign"><const>%s</const></edit>' % hint,
+          '    <edit name="rgba" mode="assign"><const>%s</const></edit>' % rgba,
+          '    <edit name="lcdfilter" mode="assign"><const>%s</const></edit>' % lcd,
+          "  </match>", "</fontconfig>"]
+    path = "/etc/fonts/conf.d/99-easycc-persona.conf"
+    new = "\n".join(x) + "\n"
+    try:
+        old = open(path).read()
+    except OSError:
+        old = ""
+    if new != old:
+        with open(path, "w") as f:
+            f.write(new)
+        subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=120)
+    out.update(fonts=len(enabled) + len(avail - set(enabled)), fontsEnabled=enabled, sans=sans, serif=serif, mono=mono, hintstyle=hint, rgba=rgba)
+    try:
+        out["mac"] = open("/sys/class/net/eth0/address").read().strip()
+    except OSError:
+        pass
+    os.makedirs("/run/cbox", exist_ok=True)
+    with open("/run/cbox/persona.json", "w") as f:
+        json.dump(out, f, ensure_ascii=False, indent=1)
+    os.chmod("/run/cbox/persona.json", 0o644)
+    print("机器身份：主机名 %s · 字体 %d 款（默认 %s / %s / %s）· 渲染 %s/%s" % (out["hostname"], out["fonts"], sans, serif, mono, hint, rgba))
+
+
+if __name__ == "__main__":
+    main()

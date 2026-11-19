@@ -1,0 +1,1481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>easyCC</title>
+<style>
+:root{
+  --bg:#0e0e10;--side:#111113;--panel:#151517;--panel2:#1b1b1d;--line:rgba(255,255,255,.101);--line2:rgba(255,255,255,.216);
+  --fg:#ececf0;--mute:#8e8e93;--dim:#5a5a60;--hover:rgba(255,255,255,.043);
+  --cyan:#f2f3f5;--green:#34d399;--amber:#fbbf24;--red:#f87171;--violet:#e3e4e8;--blue:#cfd2d8;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,"JetBrains Mono","Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden}
+body{font:13.5px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--cyan);text-decoration:none}
+.mono{font-family:var(--mono)}
+.app{display:grid;grid-template-columns:216px minmax(0,1fr);height:100vh}
+/* ---- 侧栏 ---- */
+.side{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:16px 12px}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px;font-family:var(--mono);font-weight:700;letter-spacing:2px;font-size:14px}
+.brand svg{filter:drop-shadow(0 0 6px rgba(255,255,255,.4))}
+.brand small{display:block;font-size:10px;letter-spacing:1px;color:var(--mute);font-weight:400}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{display:flex;align-items:center;gap:10px;background:none;border:0;padding:9px 12px;border-radius:8px;cursor:pointer;color:var(--mute);text-align:left;position:relative}
+.nav button:hover{background:var(--hover);color:var(--fg)}
+.nav button.on{background:rgba(255,255,255,.072);color:var(--cyan)}
+.nav button.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+.nav .cnt{margin-left:auto;font:11px var(--mono);color:var(--mute);background:rgba(255,255,255,.075);padding:0 7px;border-radius:9px}
+.nav .cnt.hot{color:#1b1b1d;background:var(--cyan)}
+.side .foot{margin-top:auto;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:12px;color:var(--mute)}
+.side .foot b{color:var(--fg);font-weight:600}
+/* ---- 主区 ---- */
+.main{display:flex;flex-direction:column;min-width:0;height:100vh;
+  background:radial-gradient(900px 400px at 20% -10%,rgba(255,255,255,.05),transparent 60%),
+  linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px) 0 0/40px 40px,linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px) 0 0/40px 40px,var(--bg)}
+.head{display:flex;align-items:center;gap:12px;padding:16px 22px 12px}
+.head h1{margin:0;font-size:18px;font-weight:650;letter-spacing:.5px}
+.head .sub{color:var(--mute);font-size:12.5px}
+.spacer{flex:1}
+.toolbar{display:flex;align-items:center;gap:8px;padding:0 22px 12px;flex-wrap:wrap}
+.content{flex:1;overflow:auto;padding:0 22px 22px}
+.page{display:none}.page.on{display:block}
+/* ---- 控件 ---- */
+.btn{display:inline-flex;align-items:center;gap:6px;cursor:pointer;background:rgba(255,255,255,.045);border:1px solid var(--line2);padding:6px 12px;border-radius:7px;font-size:13px;transition:.12s;white-space:nowrap}
+.btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn.pri{background:linear-gradient(180deg,rgba(255,255,255,.202),rgba(255,255,255,.086));border-color:rgba(255,255,255,.4);color:#ffffff}
+.btn.pri:hover{box-shadow:0 0 14px -4px var(--cyan)}
+.btn.danger{color:var(--red);border-color:rgba(248,113,113,.4)}
+.btn.ghost{background:none;border-color:transparent;color:var(--mute)}.btn.ghost:hover{color:var(--cyan);border-color:var(--line2)}
+.btn.sm{padding:3px 9px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.ib{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid transparent;background:none;cursor:pointer;color:var(--mute)}
+.ib:hover{border-color:var(--line2);color:var(--cyan);background:var(--hover)}
+.ib:disabled{opacity:.3;cursor:not-allowed}
+.in,select.in,textarea.in{width:100%;background:rgba(12,12,14,.7);border:1px solid var(--line2);border-radius:7px;padding:7px 10px;outline:none;font-size:13px}
+.in:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(255,255,255,.086)}
+.in.mono{font-family:var(--mono)}
+.search{width:240px;padding-left:30px;background:rgba(12,12,14,.7) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%238e8e93' stroke-width='2'%3E%3Ccircle cx='6' cy='6' r='4.5'/%3E%3Cpath d='m10 10 3 3'/%3E%3C/svg%3E") no-repeat 10px center}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:none;border-radius:99px;padding:3px 11px;font-size:12px;color:var(--mute);cursor:pointer}
+.chip.on{border-color:var(--cyan);color:var(--cyan);background:rgba(255,255,255,.058)}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+.seg button{background:none;border:0;padding:6px 14px;cursor:pointer;color:var(--mute);font-size:12.5px}
+.seg button.on{background:rgba(255,255,255,.115);color:var(--cyan)}
+.switch{position:relative;width:34px;height:19px;flex:none;cursor:pointer}
+.switch input{display:none}.switch i{position:absolute;inset:0;border-radius:10px;background:rgba(255,255,255,.188);transition:.15s}
+.switch i::after{content:"";position:absolute;left:2px;top:2px;width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s}
+.switch input:checked+i{background:var(--cyan)}.switch input:checked+i::after{left:17px}
+/* ---- 表格 ---- */
+.tablewrap{border:1px solid var(--line);border-radius:12px;background:rgba(27,27,29,.7);overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:500;font-size:12px;color:var(--mute);letter-spacing:.5px;padding:10px 12px;border-bottom:1px solid var(--line);background:rgba(20,20,22,.8);white-space:nowrap;position:sticky;top:0;z-index:1}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--hover)}
+tbody tr.sel{background:rgba(255,255,255,.05)}
+.cb{width:15px;height:15px;accent-color:#f2f3f5;cursor:pointer}
+.nm{font-weight:600;display:flex;align-items:center;gap:7px;white-space:nowrap}
+.nm .id{font:11px var(--mono);color:var(--dim);font-weight:400}
+.note{font-size:12px;color:var(--mute);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{display:inline-block;white-space:nowrap;font-size:11.5px;padding:1px 8px;border-radius:4px;background:rgba(255,255,255,.094);color:var(--violet)}
+.exitip{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.sub2{font-size:11.5px;color:var(--mute);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+.path{font-family:var(--mono);font-size:12px;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid;white-space:nowrap}
+.st i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.res{margin-top:7px;display:flex;gap:12px;white-space:nowrap}
+.res .ri{display:inline-flex;align-items:center;gap:5px;cursor:default}
+.res .ri>span{display:flex;flex-direction:column;line-height:1.15}
+.res .ri b{font:600 11.5px var(--mono);color:var(--fg)}.res .ri i{font-style:normal;font-size:10px;color:var(--dim)}
+.ring{transform:rotate(-90deg);flex:none}.ring circle{fill:none;stroke-width:3}.ring .tr{stroke:rgba(255,255,255,.1)}
+.ring .fg{stroke:#eceef2;stroke-linecap:round;transition:stroke-dasharray .4s}.ring.warn .fg{stroke:#fbbf24}.ring.bad .fg{stroke:#ff6b6b}
+.tools{display:flex;align-items:center;gap:4px;margin-top:6px}
+.tools .ib{width:28px;height:26px}
+.ib.bdgw{position:relative}
+.exitip{display:flex;align-items:center;gap:5px}
+.chk{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;border:0;padding:0;cursor:pointer;
+  color:rgba(255,255,255,.36);background:rgba(255,255,255,.06)}
+.chk:hover{color:#fff;background:rgba(255,255,255,.36)}
+.chk.spinning{color:var(--cyan)}.chk.spinning svg{animation:sp .8s linear infinite}
+.chk.ok{color:#062a14;background:var(--green)}.chk.ok:hover{background:#6ee79a}
+.chk.bad{color:#fff;background:var(--red)}.chk.bad:hover{background:#ff8a8a}
+.ib .bdg{position:absolute;top:-6px;right:-7px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:linear-gradient(180deg,#f4f5f7,#d3d6dc);color:#fff;font:700 10px/16px var(--mono);text-align:center;box-shadow:0 0 0 2px rgba(20,20,22,.9)}
+.ib:disabled .bdg{opacity:.7}
+.pcount.none{border-color:var(--line2);background:rgba(255,255,255,.05);color:rgba(255,255,255,.4)}
+.pcount{position:relative;margin-right:4px;display:inline-flex;align-items:center;justify-content:center;width:30px;height:26px;border-radius:9px;cursor:pointer;
+  border:1px solid rgba(74,222,128,.28);background:rgba(74,222,128,.08);color:var(--green)}
+.pcount:hover{background:rgba(74,222,128,.16)}
+.pcount b{position:absolute;top:-6px;right:-7px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--green);color:#05240f;font:700 10px/16px var(--mono);text-align:center;box-shadow:0 0 0 2px rgba(20,20,22,.9)}
+.res .bar{height:4px;border-radius:2px;background:rgba(255,255,255,.105);overflow:hidden}
+.res .bar b{display:block;height:100%;background:var(--cyan);border-radius:2px;transition:width .4s}
+.res .bar b.warn{background:var(--amber)}.res .bar b.bad{background:var(--red)}
+.res em{font-style:normal;color:var(--fg)}
+.sumbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 26px;margin:0 22px 14px;padding:10px 16px;border:1px solid var(--line);border-radius:12px;
+  background:rgba(27,27,29,.85);font-size:12px;color:var(--mute)}
+.sumbar .it{display:flex;align-items:center;gap:8px}
+.sumbar .it b{font:600 13px var(--mono);color:var(--fg)}
+.sumbar .it small{font:11px var(--mono);color:var(--dim)}
+.sumbar .bar{width:70px;height:5px;border-radius:3px;background:rgba(255,255,255,.105);overflow:hidden}
+.sumbar .bar b{display:block;height:100%;background:var(--cyan);border-radius:3px}
+.sumbar .bar b.warn{background:var(--amber)}.sumbar .bar b.bad{background:var(--red)}
+.st.running{color:var(--green);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.08)}.st.running i{box-shadow:0 0 6px currentColor;animation:pl 1.8s infinite}
+.st.stopped{color:var(--mute);border-color:rgba(255,255,255,.225)}
+.st.busy{color:var(--cyan);border-color:rgba(255,255,255,.288);background:rgba(255,255,255,.058)}
+.st.bad{color:var(--red);border-color:rgba(248,113,113,.4)}
+@keyframes pl{50%{opacity:.35}}
+.ops{display:flex;align-items:center;gap:2px;justify-content:flex-end}
+.time{font-size:12px;color:var(--mute);white-space:nowrap}
+.empty{padding:70px 20px;text-align:center;color:var(--mute)}
+.empty h3{color:var(--fg);margin:14px 0 6px;font-size:16px}
+.banner{display:flex;align-items:center;gap:12px;padding:11px 14px;margin:0 22px 12px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.07);border-radius:10px;font-size:13px}
+.banner.err{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.07)}
+/* ---- 菜单 ---- */
+.menu{position:fixed;z-index:60;min-width:168px;background:#19191b;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.menu button{display:flex;width:100%;align-items:center;gap:9px;background:none;border:0;padding:7px 10px;border-radius:6px;cursor:pointer;text-align:left;font-size:13px}
+.menu button:hover{background:var(--hover);color:var(--cyan)}
+.menu button.danger{color:var(--red)}.menu hr{border:0;border-top:1px solid var(--line);margin:4px 0}
+/* ---- 抽屉 / 弹窗 ---- */
+.mask{position:fixed;inset:0;background:rgba(10,10,12,.6);backdrop-filter:blur(2px);z-index:40;display:none}
+.mask.on{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:560px;max-width:100vw;background:var(--panel);border-left:1px solid var(--line2);z-index:50;
+  transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;box-shadow:-20px 0 60px rgba(0,0,0,.45)}
+.drawer.on{transform:none}
+.dh{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.dh h2{margin:0;font-size:16px}
+.dtabs{display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--line)}
+.dtabs button{background:none;border:0;padding:10px 12px;color:var(--mute);cursor:pointer;position:relative}
+.dtabs button.on{color:var(--cyan)}.dtabs button.on::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--cyan)}
+.dbody{flex:1;overflow:auto;padding:16px 20px}
+.dsec{display:none}.dsec.on{display:block}
+.df{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.f{margin-bottom:14px}
+.f>label{display:block;font-size:12px;color:var(--mute);margin-bottom:5px;letter-spacing:.3px}
+.f .help{font-size:11.5px;color:var(--dim);margin-top:4px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.g3{display:grid;grid-template-columns:1.7fr 1fr;gap:0 12px}
+.row{display:flex;gap:8px;align-items:center}
+.card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:rgba(12,12,14,.45)}
+.card.ok{border-color:rgba(52,211,153,.45)}.card.bad{border-color:rgba(248,113,113,.45)}
+.kv{display:grid;grid-template-columns:76px minmax(0,1fr);gap:4px 10px;font-size:12.5px}.kv>div:nth-child(odd){color:var(--mute)}
+.plist{max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:9px}
+.pitem{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.pitem:last-child{border-bottom:0}.pitem:hover{background:var(--hover)}.pitem.on{background:rgba(255,255,255,.072)}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.98);width:620px;max-width:94vw;max-height:86vh;background:var(--panel);border:1px solid var(--line2);border-radius:14px;z-index:55;display:none;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.modal.on{display:flex;transform:translate(-50%,-50%)}
+/* 弹窗高度不固定时，WebKit（App 窗口 / Safari）会把 flex:1 的内容区算成 0 高：按内容撑开，超出最大高度才滚动 */
+.modal .dbody{flex:1 1 auto;min-height:0}
+.log{font:12px/1.6 var(--mono);background:#0b0b0c;border:1px solid var(--line);border-radius:9px;padding:12px;height:360px;overflow:auto;white-space:pre-wrap;color:#c4c4ca}
+.jobs .jrow{display:grid;grid-template-columns:22px 170px minmax(0,1fr) 110px 70px;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.jobs .jrow:hover{background:var(--hover)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line2);border-top-color:var(--cyan);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.sgrid .card h3{margin:0 0 10px;font-size:14px}
+.fwd{display:inline-flex;align-items:center;gap:4px;font:11.5px var(--mono);padding:1px 7px;margin:3px 4px 0 0;border-radius:4px;
+  border:1px solid rgba(52,211,153,.35);color:var(--green);background:rgba(52,211,153,.06);cursor:pointer}
+.fwd.idle{border-color:rgba(255,255,255,.262);color:var(--mute);background:none}
+.ptable{width:100%;border-collapse:collapse;font-size:13px}.ptable th{position:static;background:none;padding:7px 8px}.ptable td{padding:8px}
+.fwd:hover{border-color:var(--green);box-shadow:0 0 10px -4px var(--green)}.fwd small{color:var(--mute);font-size:10.5px}
+.kind{white-space:nowrap;font-size:10.5px;padding:0 6px;border-radius:3px;font-weight:500;background:rgba(255,255,255,.086);color:var(--cyan)}
+.kind.dev{background:rgba(52,211,153,.12);color:var(--green)}
+.typecards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tc{border:1px solid var(--line2);border-radius:10px;padding:12px;cursor:pointer;background:rgba(12,12,14,.45)}
+.tc:hover{border-color:var(--cyan)}.tc.on{border-color:var(--cyan);background:rgba(255,255,255,.058);box-shadow:0 0 16px -6px var(--cyan)}
+.tc b{display:block;margin-bottom:3px}.tc span{font-size:12px;color:var(--mute)}
+.bm{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px dashed var(--cyan);border-radius:8px;color:var(--cyan);cursor:grab;font-weight:600}
+#toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,10px);background:rgba(23,23,25,.96);border:1px solid var(--line2);padding:9px 18px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;z-index:90;box-shadow:0 0 24px -8px var(--cyan)}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+.c-ok{color:var(--green)}.c-bad{color:var(--red)}.c-warn{color:var(--amber)}.c-mute{color:var(--mute)}.c-cyan{color:var(--cyan)}
+@media (max-width:900px){.app{grid-template-columns:64px minmax(0,1fr)}.brand span,.nav button span,.nav .cnt,.side .foot{display:none}.search{width:160px}}
+/* ================= 液态玻璃主题 =================
+   思路（借鉴 macOS 26 Liquid Glass 和 GitHub 上的 liquid-glass 系列实现）：
+   1. App 里窗口本身是系统毛玻璃（透出桌面），网页背景透明，只铺一层深色调和极光渐变；
+   2. 面板 = 半透明白 + backdrop 模糊/提饱和 + 顶部高光边（specular rim）+ 柔和投影；
+   3. 侧栏悬浮：四周留空、大圆角，红绿灯按钮落在侧栏里；
+   4. 去掉霓虹描边和网格，强调色换成更柔和的冰蓝。 */
+:root{
+  --cyan:#f2f3f5;--blue:#cfd2d8;--green:#4ade80;--amber:#fbbf24;--red:#ff6b6b;--violet:#e3e4e8;
+  --fg:#f4f4f6;--mute:rgba(255,255,255,.4);--dim:rgba(255,255,255,.259);
+  --line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.14);--hover:rgba(255,255,255,.06);
+  --glass:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));
+  --glass-strong:linear-gradient(180deg,rgba(61,61,63,.82),rgba(42,42,44,.8));
+  --rim:inset 0 1px 0 rgba(255,255,255,.16),inset 0 0 0 1px rgba(255,255,255,.06);
+  --shadow:0 12px 40px -12px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.18);
+  --blur:blur(30px) saturate(180%);
+  --r:16px;
+  /* 尺寸体系（全部从窗口圆角推出来，保证层层同心）：
+     --wr 窗口圆角（App 按系统实际值写入，macOS 27 是 16）；--wg 悬浮面板离窗口边的距离
+     圆角：面板 --r-lg = wr − wg；卡片/按钮/输入框 --r-md；小按钮/图标/菜单项/标签 --r-sm；更小的 --r-xs；胶囊形（搜索、筛选、状态、提示）99
+     间距只有这几档：--sp-0 4（文字和说明之间）、--sp-1 6（图标之间、按钮之间、离窗口边）、--sp-2 12（面板/卡片/表格单元格内边距、面板之间、卡片之间）、
+     --sp-3 18（抽屉和弹窗的内边距）、--sp-4 24（空状态） */
+  --wr:16px;--wg:6px;
+  --r-lg:max(calc(var(--wr) - var(--wg)),8px);--r-md:calc(var(--r-lg) - 2px);--r-sm:calc(var(--r-lg) - 4px);--r-xs:4px;
+  --sp-0:4px;--sp-1:6px;--sp-2:12px;--sp-3:18px;--sp-4:24px;
+}
+html{background:#141416}
+html.native{background:transparent}
+html,body{background:transparent}
+body{color:var(--fg);-webkit-font-smoothing:antialiased;
+  background:
+    radial-gradient(900px 520px at 8% -8%,rgba(255,255,255,.115),transparent 60%),
+    radial-gradient(800px 600px at 105% 10%,rgba(255,255,255,.115),transparent 60%),
+    radial-gradient(900px 600px at 60% 120%,rgba(255,255,255,.086),transparent 60%),
+    rgba(20,20,22,.62)}
+html:not(.native) body{background-color:#141416}
+::selection{background:rgba(255,255,255,.252)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:10px;border:3px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* 玻璃面板通用 */
+.side,.tablewrap,.sumbar,.card,.menu,.modal,.drawer,#toast,.plist,.tc,.banner{
+  -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  background:var(--glass);border:1px solid var(--line2);box-shadow:var(--rim),var(--shadow)}
+
+/* ---- 布局：悬浮侧栏 ---- */
+.app{grid-template-columns:242px minmax(0,1fr);gap:0;padding:0;height:100vh}
+.side{margin:10px 0 10px 10px;border-radius:22px;padding:50px 12px 12px;position:relative;overflow:hidden;
+  background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.045))}
+.side::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(120% 60% at 0% 0%,rgba(255,255,255,.12),transparent 55%)}
+html:not(.native) .side{padding-top:16px}
+.brand{font-family:inherit;letter-spacing:.2px;font-size:15px;font-weight:650;padding:2px 8px 16px}
+.brand svg{filter:drop-shadow(0 2px 8px rgba(255,255,255,.324))}
+.brand small{letter-spacing:.2px;font-size:11px}
+.nav{gap:3px}
+.nav button{border-radius:12px;padding:9px 12px;color:rgba(255,255,255,.4);transition:background .15s,color .15s}
+.nav button:hover{background:rgba(255,255,255,.07);color:var(--fg)}
+.nav button.on{color:#fff;background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.1));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 0 0 1px rgba(255,255,255,.08),0 4px 14px -6px rgba(0,0,0,.5)}
+.nav button.on::before{display:none}
+.nav button.on svg{color:var(--cyan)}
+.nav .cnt{font-family:inherit;background:rgba(255,255,255,.1);color:var(--mute)}
+.nav .cnt.hot{background:var(--cyan);color:#131315}
+.side .foot{border-radius:14px;background:rgba(255,255,255,.05);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+
+.main{background:none;height:100vh}
+/* 第一行在标题栏里（和红绿灯同一高度）：页面标题 + 主要操作；第二行：搜索、筛选、批量操作 */
+.head{height:52px;flex:none;padding:0 24px;gap:10px}
+.head h1{font-size:17px;font-weight:700;letter-spacing:0}
+.head .btn{padding:5px 12px}
+.toolbar{padding:4px 24px 12px}
+.sumbar{margin:0 24px 10px!important}
+.content{padding:0 24px 18px}
+
+/* ---- 控件 ---- */
+.btn{border-radius:11px;padding:7px 14px;border:1px solid var(--line2);color:var(--fg);
+  background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.05));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 1px 2px rgba(0,0,0,.25);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%)}
+.btn:hover{color:#fff;border-color:rgba(255,255,255,.26);background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.08))}
+.btn:active{transform:scale(.97)}
+.btn.pri{color:#fff;border-color:rgba(255,255,255,.324);
+  background:linear-gradient(180deg,rgba(255,255,255,.4),rgba(255,255,255,.4));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 6px 18px -6px rgba(255,255,255,.4)}
+.btn.pri:hover{background:linear-gradient(180deg,rgba(255,255,255,.4),rgba(255,255,255,.4));box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 8px 22px -6px rgba(255,255,255,.4)}
+.btn.danger{color:var(--red);border-color:rgba(255,107,107,.35)}
+.btn.ghost{background:none;box-shadow:none;border-color:transparent}
+.btn.sm{border-radius:9px;padding:4px 10px}
+.btn:disabled{opacity:.38;transform:none}
+.ib{border-radius:9px;width:30px;height:30px;color:rgba(255,255,255,.4)}
+.ib:hover{color:#fff;border-color:transparent;background:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.in,select.in,textarea.in{border-radius:11px;border:1px solid var(--line2);background:rgba(255,255,255,.06);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.25);padding:8px 11px}
+.in:focus{border-color:rgba(255,255,255,.4);box-shadow:0 0 0 4px rgba(255,255,255,.115)}
+select.in option{background:#2a2a2d}
+.search{width:280px;border-radius:99px;padding-left:34px;background:rgba(255,255,255,.06) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23b6b6ba' stroke-width='2'%3E%3Ccircle cx='6' cy='6' r='4.5'/%3E%3Cpath d='m10 10 3 3'/%3E%3C/svg%3E") no-repeat 13px center}
+.chip{border-radius:99px;border-color:var(--line2);background:rgba(255,255,255,.04)}
+.chip.on{color:#fff;border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+.seg{border-radius:11px;border-color:var(--line2);background:rgba(255,255,255,.05);padding:2px}
+.seg button{border-radius:9px}
+.seg button.on{color:#fff;background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.1));box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.switch i{background:rgba(255,255,255,.18)}
+.switch input:checked+i{background:linear-gradient(180deg,#f4f5f7,#d3d6dc)}
+.cb{accent-color:#f2f3f5}
+
+/* ---- 列表 ---- */
+.tablewrap{border-radius:20px;overflow:hidden}
+th{background:rgba(255,255,255,.03);color:var(--dim);font-size:11.5px;font-weight:600;letter-spacing:.6px;padding:12px 14px;border-bottom:1px solid var(--line)}
+td{padding:14px;border-bottom:1px solid var(--line)}
+tbody tr{transition:background .15s}
+tbody tr:hover{background:rgba(255,255,255,.045)}
+tbody tr.sel{background:rgba(255,255,255,.058)}
+.nm{font-size:14.5px}
+.exitip{font-weight:600}
+.tag{border-radius:7px;background:rgba(255,255,255,.101)}
+.kind{border-radius:6px;padding:1px 7px}
+.st{border-radius:99px;padding:3px 10px;font-weight:500;border:1px solid transparent;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.st.running{background:rgba(74,222,128,.13);border-color:rgba(74,222,128,.25)}
+.st.stopped{background:rgba(255,255,255,.06);border-color:var(--line)}
+.st.busy{background:rgba(255,255,255,.086);border-color:rgba(255,255,255,.18)}
+.fwd{border-radius:7px;background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.25)}
+.res .bar,.sumbar .bar{background:rgba(255,255,255,.1);box-shadow:inset 0 1px 1px rgba(0,0,0,.3)}
+.res .bar b,.sumbar .bar b{background:linear-gradient(90deg,#f4f5f7,#cfd2d8)}
+.res .bar b.warn,.sumbar .bar b.warn{background:linear-gradient(90deg,#fde68a,#f59e0b)}
+.res .bar b.bad,.sumbar .bar b.bad{background:linear-gradient(90deg,#fca5a5,#ef4444)}
+.sumbar{border-radius:18px;padding:10px 18px;gap:6px 20px;flex-wrap:nowrap;overflow:hidden}
+.sumbar .it{white-space:nowrap}
+.sumbar .it small{color:var(--dim)}
+.banner{border-radius:14px;margin:0 24px 12px;background:linear-gradient(180deg,rgba(251,191,36,.14),rgba(251,191,36,.06));border-color:rgba(251,191,36,.3)}
+.banner.err{background:linear-gradient(180deg,rgba(255,107,107,.15),rgba(255,107,107,.06));border-color:rgba(255,107,107,.32)}
+.empty svg{stroke:var(--cyan)}
+
+/* ---- 菜单 / 抽屉 / 弹窗 / 提示 ---- */
+.menu{border-radius:14px;padding:6px;background:var(--glass-strong);box-shadow:var(--rim),0 20px 50px -10px rgba(0,0,0,.6)}
+.menu button{border-radius:8px}
+.menu button:hover{background:rgba(255,255,255,.4);color:#fff}
+.menu button.danger:hover{background:rgba(255,107,107,.85);color:#fff}
+.menu hr{border-top-color:var(--line2)}
+.mask{background:rgba(14,14,16,.42);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.drawer{top:10px;right:10px;bottom:10px;border-radius:22px;background:var(--glass-strong);transform:translateX(calc(100% + 20px));box-shadow:var(--rim),-20px 0 60px rgba(0,0,0,.45)}
+.drawer.on{transform:none}
+.dh,.dtabs,.df{border-color:var(--line)}
+.dtabs button{border-radius:8px 8px 0 0}
+.dtabs button.on{color:#fff}.dtabs button.on::after{height:2px;border-radius:2px;background:linear-gradient(90deg,#f4f5f7,#cfd2d8)}
+.modal{border-radius:22px;background:var(--glass-strong);box-shadow:var(--rim),0 30px 80px rgba(0,0,0,.6)}
+.card{border-radius:14px;background:rgba(255,255,255,.045);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.card.ok{border-color:rgba(74,222,128,.35)}.card.bad{border-color:rgba(255,107,107,.35)}
+.plist{border-radius:14px;background:rgba(255,255,255,.04);box-shadow:none}
+.pitem.on{background:rgba(255,255,255,.101)}
+.tc{border-radius:14px;background:rgba(255,255,255,.045);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.tc:hover{border-color:rgba(255,255,255,.25)}
+.tc.on{border-color:rgba(255,255,255,.396);background:rgba(255,255,255,.086);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 0 0 3px rgba(255,255,255,.101)}
+.log{border-radius:12px;background:rgba(0,0,0,.35);border-color:var(--line)}
+.jobs .jrow{border-color:var(--line)}.jobs .jrow:hover{background:rgba(255,255,255,.045)}
+#toast{border-radius:99px;padding:10px 20px;background:var(--glass-strong);box-shadow:var(--rim),0 12px 30px rgba(0,0,0,.5)}
+.bm{border-radius:11px}
+.spin{border-color:rgba(255,255,255,.18);border-top-color:var(--cyan)}
+html.native .drawer{top:52px}
+/* 品牌在标题栏里，紧挨红绿灯；侧栏条目的 ＋ */
+html.native .side{padding-top:58px}
+html.native .brand{position:fixed;top:13px;left:calc(var(--wg) + 86px);padding:0;gap:7px;font-size:13.5px;z-index:5;pointer-events:none}
+html.native .brand svg{width:20px;height:20px}
+html.native .brand small{display:none}
+.nav .nadd{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:6px;border-radius:7px;flex:none;
+  color:rgba(255,255,255,.4);background:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.14);cursor:pointer;transition:.15s}
+.nav .nadd:hover{color:#fff;background:linear-gradient(180deg,rgba(255,255,255,.4),rgba(255,255,255,.4))}
+.nav .cnt{margin-left:auto}
+.head .search{width:240px;margin-left:10px;padding-top:6px;padding-bottom:6px}
+.head .chips{flex-wrap:nowrap;overflow:hidden}
+.content{padding-top:2px}
+td{padding:12px}th{padding:11px 12px}
+
+@media (max-width:900px){.app{grid-template-columns:72px minmax(0,1fr)}}
+
+/* 列表里的小图标按钮统一一个样式：检测、端口、浏览器、终端、VS Code */
+.chk,.tools .ib,.tools .pcount{width:26px;height:26px;margin:0;border-radius:8px;border:1px solid var(--line2);padding:0;
+  display:inline-flex;align-items:center;justify-content:center;color:rgba(255,255,255,.4);
+  background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.04));box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.chk:hover,.tools .ib:hover:not(:disabled),.tools .pcount:hover{color:#fff;background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.08));border-color:rgba(255,255,255,.24)}
+.tools .ib:disabled{opacity:.35}
+.tools{gap:6px}
+.tools .pcount b{background:var(--green);color:#05240f}
+.chk.ok{color:var(--green);border-color:rgba(74,222,128,.45);background:rgba(74,222,128,.12)}
+.chk.bad{color:var(--red);border-color:rgba(255,107,107,.45);background:rgba(255,107,107,.12)}
+.chk.spinning{color:var(--cyan);border-color:rgba(255,255,255,.324)}
+.exitip{gap:7px}
+
+/* 账号卡、云端页 */
+.acct{display:flex;align-items:center;gap:10px;margin-top:auto;margin-bottom:8px;padding:10px;border-radius:14px;cursor:pointer;
+  background:rgba(255,255,255,.06);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);transition:.15s}
+.acct:hover{background:rgba(255,255,255,.1)}
+.acct b{display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acct .av{width:32px;height:32px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;
+  background:linear-gradient(180deg,#f4f5f7,#d3d6dc);box-shadow:inset 0 1px 0 rgba(255,255,255,.4)}
+.side .foot{margin-top:0}
+.cgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.cstat b{display:block;font-size:15px;margin-top:2px}
+.cstat .bar{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:8px}
+.cstat .bar b{height:100%;margin:0;background:linear-gradient(90deg,#f4f5f7,#cfd2d8);border-radius:3px}
+.plan .price{font:700 24px/1.4 var(--mono);margin:6px 0 2px}.plan .price small{font-size:12px;color:var(--mute);font-weight:400}
+.plan.cur{border-color:rgba(74,222,128,.4)}
+.tools .ib.synced{color:var(--cyan);border-color:rgba(255,255,255,.288)}
+
+/* Kiteline */
+.klicon{display:block;width:16px;height:16px;border-radius:4px;background:url("data:image/png;base64,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") center/cover}
+.ib:disabled .klicon{filter:grayscale(1)}
+.ib .bdg.on{background:linear-gradient(180deg,#6ee79a,#22c55e);color:#05240f}
+.klpair{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.klqr{width:190px;height:190px;background:#fff;border-radius:16px;padding:8px;flex:none;box-shadow:0 10px 30px -10px rgba(0,0,0,.6)}
+.klqr svg{width:100%;height:100%}
+.code6{font:700 40px/1.2 var(--mono);letter-spacing:10px;color:#f4f4f6;margin:6px 0}
+
+/* ===== 统一尺寸：圆角、间距一律用上面的变量，新组件照这里归类 ===== */
+/* 面板（贴窗口或直接放在背景上） */
+.side{margin:var(--wg) 0 var(--wg) var(--wg);border-radius:var(--r-lg)}
+.drawer{top:var(--wg);right:var(--wg);bottom:var(--wg);border-radius:var(--r-lg)}
+html.native .drawer{top:52px}
+.modal,.tablewrap,.sumbar,.banner,.menu{border-radius:var(--r-lg)}
+.menu{padding:calc(var(--r-lg) - var(--r-sm))}
+/* 面板里的块和控件 */
+.card,.tc,.plist,.log,.side .foot,.acct,.btn,.in,select.in,textarea.in,.seg,.nav button,.bm,.klqr{border-radius:var(--r-md)}
+.seg{padding:2px}
+/* 小控件 */
+.btn.sm,.ib,.chk,.tools .ib,.tools .pcount,.pcount,.menu button,.seg button,.tag,.fwd,.nav .nadd,.acct .av{border-radius:var(--r-sm)}
+.dtabs button{border-radius:var(--r-sm) var(--r-sm) 0 0}
+.kind,.klicon{border-radius:var(--r-xs)}
+/* ---- 间距 ----
+   铁律：面板离窗口边 = --wg(6)；面板和面板之间 = --sp-2(12)；面板、卡片、表格单元格的内边距 = --sp-2(12)，
+   所以列表第一列、汇总条第一项、横幅文字、页头标题都在同一条竖线上；抽屉和弹窗的内边距 = --sp-3(18)。 */
+/* 侧栏 */
+.side{padding:var(--sp-2)}
+html.native .side{padding-top:58px}
+.brand{padding:0 var(--sp-1) var(--sp-2);gap:var(--sp-1)}
+.nav{gap:var(--sp-0)}
+.nav button{padding:8px var(--sp-2);gap:var(--sp-2)}
+.nav .nadd{margin-left:var(--sp-1)}
+.acct{padding:var(--sp-2);gap:var(--sp-2);margin-bottom:var(--sp-1)}
+.side .foot{padding:var(--sp-2)}
+/* 主区：左边离侧栏 12，右边、下边离窗口 6 */
+.head{padding:0 var(--wg) 0 var(--sp-2);gap:var(--sp-2)}
+.head .search{margin-left:0}
+.head .btn{padding:5px var(--sp-2)}
+.toolbar{padding:0 var(--wg) var(--sp-2) var(--sp-2);gap:var(--sp-1)}
+.content{padding:2px var(--wg) var(--wg) var(--sp-2)}
+.banner{margin:0 var(--wg) var(--sp-2) var(--sp-2);padding:10px var(--sp-2);gap:var(--sp-2)}
+.sumbar{margin:var(--wg) var(--wg) var(--wg) var(--sp-2)!important;padding:10px var(--sp-2);gap:var(--sp-3);justify-content:space-between}
+/* 汇总条：放不下时次要说明（「/ 分配…」「· 剩余…」）截断，不让内容顶出圆角 */
+.sumbar .it{flex:0 1 auto;min-width:0;gap:var(--sp-1)}
+.sumbar .it b,.sumbar .bar{flex:none}
+.sumbar .it small{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sumbar .bar{width:48px}
+.sumbar .it:first-child small{flex:none}
+/* 控件 */
+.btn{padding:6px var(--sp-2);gap:var(--sp-1)}
+.btn.sm{padding:4px 10px}
+.in,select.in,textarea.in{padding:8px var(--sp-2)}
+.search{padding-left:34px}
+.chips{gap:var(--sp-1)}
+.chip{padding:3px var(--sp-2)}
+.seg button{padding:6px var(--sp-2)}
+.row{gap:var(--sp-1)}
+/* 表格：单元格内边距 12；第一列复选框 */
+th{padding:11px var(--sp-2)}td{padding:var(--sp-2)}
+th:has(> .cb),td:has(> .cb){width:calc(16px + var(--sp-2));padding-right:0}
+.tablewrap{overflow-x:auto}
+.path{max-width:clamp(140px,17vw,260px)}
+.nm{gap:var(--sp-1)}
+.res{margin-top:var(--sp-1);gap:var(--sp-2)}
+.tools{margin-top:var(--sp-1);gap:var(--sp-1)}
+.exitip{gap:var(--sp-1)}
+.ops{gap:var(--sp-0)}
+.fwd{margin:var(--sp-0) var(--sp-0) 0 0}
+.empty{padding:70px var(--sp-4)}
+.ptable th,.ptable td{padding:var(--sp-1) var(--sp-2)}
+.jobs .jrow{padding:11px var(--sp-2);gap:var(--sp-2)}
+/* 复选框：统一的玻璃样式（系统自带的在深色玻璃上很突兀） */
+input[type=checkbox].cb{-webkit-appearance:none;appearance:none;flex:none;width:16px;height:16px;margin:0;border-radius:var(--r-xs);cursor:pointer;
+  border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.06);box-shadow:inset 0 1px 1px rgba(0,0,0,.25);
+  display:inline-grid;place-content:center;vertical-align:middle;transition:background .12s,border-color .12s}
+input[type=checkbox].cb:hover{border-color:rgba(255,255,255,.45)}
+input[type=checkbox].cb:checked,input[type=checkbox].cb:indeterminate{border-color:transparent;background:linear-gradient(180deg,#f4f5f7,#d3d6dc);box-shadow:inset 0 1px 0 rgba(255,255,255,.4)}
+input[type=checkbox].cb:checked::after{content:"";width:8px;height:4px;margin-top:-2px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg)}
+input[type=checkbox].cb:indeterminate::after{content:"";width:8px;height:2px;border-radius:1px;background:#fff}
+/* 菜单 */
+.menu button{padding:6px var(--sp-1);gap:var(--sp-1)}
+.menu hr{margin:var(--sp-0) 0}
+/* 抽屉、弹窗：内边距 18 */
+.dh{padding:var(--sp-2) var(--sp-3);gap:var(--sp-2)}
+.dtabs{padding:0 var(--sp-3);gap:var(--sp-0)}
+.dtabs button{padding:10px var(--sp-2)}
+.dbody{padding:var(--sp-3)}
+.df{padding:var(--sp-2) var(--sp-3);gap:var(--sp-1)}
+.f{margin-bottom:var(--sp-2)}
+.f>label{margin-bottom:var(--sp-1)}
+.f .help{margin-top:var(--sp-0)}
+.g2,.g3{gap:0 var(--sp-2)}
+/* 卡片 */
+.card,.tc,.content .card{padding:var(--sp-2)}
+.content .card{border-radius:var(--r-lg)}  /* 直接放在背景上的卡片算面板 */
+.sgrid,.cgrid,.typecards{gap:var(--sp-2)}
+.sgrid .card h3{margin:0 0 var(--sp-2)}
+.kv{gap:var(--sp-0) var(--sp-2)}
+.pitem{padding:8px var(--sp-2);gap:var(--sp-2)}
+.log{padding:var(--sp-2)}
+.bm{padding:8px var(--sp-2);gap:var(--sp-1)}
+.klpair{gap:var(--sp-3)}
+#toast{padding:10px var(--sp-3)}
+.stbar{display:flex;height:8px;border-radius:99px;overflow:hidden;background:var(--hover);margin:var(--sp-2) 0 var(--sp-1)}
+.stbar i{display:block;height:100%;min-width:2px}
+.stleg{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:var(--sp-0) var(--sp-2);font-size:12px;color:var(--mute)}
+#stLoc{grid-template-columns:auto minmax(0,1fr)}
+.stleg span{display:flex;align-items:center;gap:var(--sp-1);white-space:nowrap;min-width:0}.stleg i{font-style:normal;overflow:hidden;text-overflow:ellipsis}.stleg b{color:var(--fg);font-weight:500;margin-left:auto;padding-left:var(--sp-1)}
+.stleg em{width:8px;height:8px;border-radius:2px;flex:none}
+/* ================= 无色玻璃 =================
+   整个客户端和所有弹窗都是无色的半透明液态玻璃。
+   玻璃本身不带色调：没有蓝紫极光、没有冰蓝强调色，透出窗口后面的桌面；强调一律用白的明暗（主按钮、选中、开关都是白玻璃 + 深色字）。
+   只有状态保留颜色：运行绿、警告黄、出错红。新组件照这里来，不要再写带色相的装饰色。 */
+:root{
+  --cyan:#f2f3f5;--blue:#cfd2d8;--violet:#e3e4e8;
+  --fg:#f4f4f6;--mute:rgba(255,255,255,.6);--dim:rgba(255,255,255,.38);
+  --line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.16);--hover:rgba(255,255,255,.07);
+  --glass:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.045));
+  --glass-strong:linear-gradient(180deg,rgba(78,78,84,.5),rgba(44,44,48,.46));
+  --rim:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 1px rgba(255,255,255,.06);
+  --shadow:0 14px 44px -14px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.16);
+  --blur:blur(36px) saturate(150%);
+  --ink:#141416;                                  /* 白玻璃上的字 */
+  --lit:linear-gradient(180deg,rgba(255,255,255,.96),rgba(226,228,233,.88));   /* 白玻璃：主按钮、选中的开关和复选框 */
+}
+html{background:#141416}
+html.native{background:transparent}
+/* App 里：窗口是系统毛玻璃，网页只盖一层很薄的中性深色，保证字看得清 */
+body{background:rgba(20,20,22,.3)}
+/* 浏览器里打开没有系统毛玻璃：用无色的明暗渐变垫底，玻璃面板才有东西可透 */
+html:not(.native) body{background:
+  radial-gradient(1100px 620px at 10% -10%,rgba(255,255,255,.13),transparent 62%),
+  radial-gradient(900px 640px at 102% 6%,rgba(255,255,255,.07),transparent 60%),
+  radial-gradient(1000px 700px at 55% 122%,rgba(255,255,255,.09),transparent 62%),#151517}
+::selection{background:rgba(255,255,255,.28)}
+a{color:var(--fg);text-decoration:underline;text-decoration-color:rgba(255,255,255,.4);text-underline-offset:3px}
+
+/* 浮层更实一点、模糊更重，压在内容上字也清楚 */
+.menu,.modal,.drawer,#toast{background:var(--glass-strong);-webkit-backdrop-filter:blur(48px) saturate(150%);backdrop-filter:blur(48px) saturate(150%)}
+.mask{background:rgba(0,0,0,.24);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.side{background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.05))}
+.side::before{background:radial-gradient(120% 60% at 0% 0%,rgba(255,255,255,.14),transparent 55%)}
+.brand svg{filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+
+/* 主按钮、选中态：白玻璃 + 深色字 */
+.btn.pri{color:var(--ink);border-color:rgba(255,255,255,.7);background:var(--lit);box-shadow:inset 0 1px 0 #fff,0 6px 18px -8px rgba(0,0,0,.55)}
+.btn.pri:hover{color:#000;border-color:#fff;background:linear-gradient(180deg,#fff,rgba(238,240,244,.96));box-shadow:inset 0 1px 0 #fff,0 8px 22px -8px rgba(0,0,0,.6)}
+.btn.pri .spin{border-color:rgba(0,0,0,.2);border-top-color:var(--ink)}
+.nav button.on svg{color:#fff}
+.nav .cnt.hot{background:#f2f3f5;color:var(--ink)}
+.nav .nadd:hover{color:var(--ink);background:var(--lit)}
+.switch i{background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.switch i::after{background:rgba(255,255,255,.9)}
+.switch input:checked+i{background:var(--lit);box-shadow:inset 0 1px 0 #fff}
+.switch input:checked+i::after{background:var(--ink)}
+input[type=checkbox].cb:checked,input[type=checkbox].cb:indeterminate{background:var(--lit);box-shadow:inset 0 1px 0 #fff}
+input[type=checkbox].cb:checked::after{border-color:var(--ink)}
+input[type=checkbox].cb:indeterminate::after{background:var(--ink)}
+.in:focus{border-color:rgba(255,255,255,.55);box-shadow:0 0 0 4px rgba(255,255,255,.12)}
+select.in option{background:#2a2a2d}
+.seg button.on,.chip.on{color:#fff}
+.dtabs button.on::after{background:#f2f3f5}
+.tc.on{border-color:rgba(255,255,255,.6);background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 0 0 3px rgba(255,255,255,.1)}
+.pitem.on{background:rgba(255,255,255,.14)}
+tbody tr.sel{background:rgba(255,255,255,.09)}
+.menu button:hover{background:rgba(255,255,255,.16);color:#fff}
+.menu button.danger:hover{background:rgba(255,107,107,.85);color:#fff}
+
+/* 标签、状态、占用：无色；运行 / 警告 / 出错照旧用绿黄红 */
+.tag{background:rgba(255,255,255,.1);color:rgba(255,255,255,.86)}
+.kind,.kind.dev{background:rgba(255,255,255,.1);color:rgba(255,255,255,.74)}
+.st.busy{color:var(--fg);background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.22)}
+.st.stopped{border-color:var(--line2)}
+.ring .tr{stroke:rgba(255,255,255,.14)}
+.ring .fg{stroke:#eceef2}
+.res .bar b,.sumbar .bar b,.cstat .bar b{background:linear-gradient(90deg,#fff,#c9ccd2)}
+.chk.spinning,.tools .ib.synced{color:#fff;border-color:rgba(255,255,255,.4)}
+.empty svg{stroke:rgba(255,255,255,.8)}
+.spin{border-color:rgba(255,255,255,.18);border-top-color:#fff}
+.code6{color:var(--fg)}
+.log{background:rgba(0,0,0,.26)}
+.acct .av{color:var(--ink);background:var(--lit)}
+</style>
+<script src="/qrcode.js"></script>
+<script>if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.cboxlog)document.documentElement.classList.add('native')</script>
+<script>
+// App 窗口：顶部 52px 是标题栏（按住拖动、双击缩放），里面的按钮、输入框照常点；位置报给原生外壳
+(function(){const h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.cboxdrag;if(!h)return;
+  let last="",t=0;
+  // 顶部 52px 始终能拖动窗口（打开抽屉 / 弹窗时也一样）；挖掉的只是能点的东西。
+  // 有遮罩时，被遮住的页头按钮点不到，不挖；抽屉 / 弹窗本身伸进这条带子的部分整个挖掉
+  function send(){t=0;const band=52,r=[],over=document.querySelector(".mask.on");
+    const add=b=>{if(b.width&&b.height&&b.top<band)r.push([Math.round(b.left)-2,Math.round(b.top)-2,Math.round(b.width)+4,Math.round(b.height)+4])};
+    if(over)document.querySelectorAll(".drawer.on,.modal.on,#menu").forEach(el=>{if(getComputedStyle(el).display!=="none")add(el.getBoundingClientRect())});
+    else document.querySelectorAll("button,input,select,textarea,a,label,[data-a],.chip,[onclick]").forEach(el=>add(el.getBoundingClientRect()));
+    const m=JSON.stringify({h:band,r});if(m!==last){last=m;h.postMessage(m)}}
+  function q(){if(!t)t=setTimeout(send,80)}
+  addEventListener("load",q);addEventListener("resize",q);
+  new MutationObserver(q).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["class","style"]});})();
+</script>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#f2f3f5" stroke-width="1.6"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M12 7v10M7.5 9.5 12 12l4.5-2.5" opacity=".7"/></svg>
+      <span>easyCC<small>隔离环境管理器</small></span>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-p="envs" class="on"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/></svg><span>环境管理</span><em class="cnt" id="cEnv">0</em><i class="nadd" title="新建环境" onclick="event.stopPropagation();openEditor()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14"/></svg></i></button>
+      <button data-p="proxies"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span>代理库</span><em class="cnt" id="cPx">0</em><i class="nadd" title="添加代理" onclick="event.stopPropagation();openModal('mAdd')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14"/></svg></i></button>
+      <button data-p="jobs"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="16" r="3"/></svg><span>任务</span><em class="cnt" id="cJob">0</em></button>
+      <button data-p="settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span></button>
+    </nav>
+    <div class="foot"><div>运行时</div><b id="rtName">—</b><div id="rtState" style="margin-top:4px">—</div></div>
+  </aside>
+
+  <main class="main">
+    <!-- ===== 环境管理 ===== -->
+    <section class="page on" id="p-envs" style="display:none;flex-direction:column;height:100%">
+      <div class="head"><h1>环境管理</h1><span class="sub" id="envSub"></span>
+        <input class="in search" id="q" placeholder="搜索名称、备注、IP、项目">
+        <div class="chips" id="groups"></div>
+        <span class="spacer"></span>
+        <span class="c-mute" id="selInfo" style="font-size:12px"></span>
+        <button class="btn sm" id="bStart" onclick="batch('start')" disabled>批量启动</button>
+        <button class="btn sm" id="bStop" onclick="batch('stop')" disabled>批量停止</button>
+        <button class="btn sm danger" id="bRm" onclick="batch('rm')" disabled>批量删除</button></div>
+      <div id="envBanner"></div>
+      <div class="content"><div class="tablewrap"><table>
+        <thead><tr><th><input type="checkbox" class="cb" id="all"></th><th>环境</th><th>分组</th><th>代理 / 出口</th><th>项目目录</th><th>状态</th><th>最近打开</th><th style="text-align:right">操作</th></tr></thead>
+        <tbody id="envRows"></tbody></table>
+        <div class="empty" id="envEmpty" style="display:none">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#f2f3f5" stroke-width="1.2" opacity=".8"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M12 7v10M7.5 9.5 12 12l4.5-2.5"/></svg>
+          <h3>还没有环境</h3><div>一个环境 = 一个独立出口 IP + 一套 Ubuntu 系统 + 浏览器 + 项目目录</div>
+          <div style="margin-top:18px"><button class="btn pri" onclick="openEditor()">新建第一个环境</button></div></div>
+      </div></div>
+      <div class="sumbar" id="sumbar" style="display:none"></div>
+    </section>
+
+    <!-- ===== 代理库 ===== -->
+    <section class="page" id="p-proxies" style="flex-direction:column;height:100%">
+      <div class="head"><h1 title="集中管理代理，新建环境时直接选用；检测在本机直连代理完成">代理库</h1>
+        <input class="in search" id="pq" placeholder="搜索地址、IP、国家、名称">
+        <span class="spacer"></span>
+        <button class="btn sm" id="pCheckSel" onclick="checkProxies(true)" disabled>检测选中</button>
+        <button class="btn sm" onclick="checkProxies(false)">全部检测</button>
+        <button class="btn sm danger" id="pDel" onclick="delProxies()" disabled>删除选中</button></div>
+      <div class="content"><div class="tablewrap"><table>
+        <thead><tr><th><input type="checkbox" class="cb" id="pall"></th><th>名称</th><th>类型</th><th>代理地址</th><th>出口</th><th>延迟</th><th>IP 类型</th><th>使用中</th><th style="text-align:right">操作</th></tr></thead>
+        <tbody id="pxRows"></tbody></table>
+        <div class="empty" id="pxEmpty" style="display:none"><h3>代理库是空的</h3><div>支持批量粘贴：一行一个 socks5://用户:密码@主机:端口，或 主机:端口:用户:密码</div>
+          <div style="margin-top:18px"><button class="btn pri" onclick="openModal('mAdd')">添加代理</button></div></div>
+      </div></div>
+    </section>
+
+    <!-- ===== 云端同步 ===== -->
+    <section class="page" id="p-cloud" style="flex-direction:column;height:100%">
+      <div class="head"><h1>云端同步</h1><span class="sub" id="cloudSub"></span><span class="spacer"></span>
+        <button class="btn sm" onclick="loadCloud()">刷新</button></div>
+      <div class="content" id="cloudBody"></div>
+    </section>
+
+    <!-- ===== 任务 ===== -->
+    <section class="page" id="p-jobs" style="flex-direction:column;height:100%">
+      <div class="head"><h1>任务</h1><span class="sub">启动、停止、构建镜像等操作依次执行，点开看详细日志</span></div>
+      <div class="content"><div class="tablewrap jobs" id="jobRows"></div></div>
+    </section>
+
+    <!-- ===== 设置 ===== -->
+    <section class="page" id="p-settings" style="flex-direction:column;height:100%">
+      <div class="head"><h1>设置</h1></div>
+      <div class="content"><div class="sgrid">
+        <div class="card"><h3>容器运行时</h3>
+          <div class="f"><label>使用哪个运行时</label><select class="in" id="sRt"><option value="auto">自动（macOS 26：Apple container；更早的系统：easyCC 虚拟机）</option><option value="container">Apple container（macOS 26）</option><option value="vm">easyCC 虚拟机（macOS 12 起）</option><option value="docker">Docker / OrbStack</option><option value="podman">Podman</option></select></div>
+          <div class="kv"><div>当前</div><div id="sRtNow">—</div><div>状态</div><div id="sRtState">—</div></div>
+        </div>
+        <div class="card"><h3>资源</h3>
+          <div class="row" style="justify-content:space-between"><span>按负载自动加减 CPU / 内存<br><span class="help">忙的时候最多加到设置值的 2 倍，闲下来收回（Docker / Podman / easyCC 虚拟机；Apple container 不支持运行中调整）</span></span><label class="switch"><input type="checkbox" id="sElastic"><i></i></label></div>
+          <div class="f" style="margin-top:12px"><label>闲置多久自动休眠</label><select class="in" id="sSleep"><option value="0">不休眠</option><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="120">2 小时</option></select>
+            <div class="help">没有连接、没有 agent 在跑、CPU 也闲着才算闲置。休眠 = 停下环境把内存全部还给电脑（Mac 上虚拟机用过的内存只有停下才还），数据都在；启动、打开或 SSH / VS Code 连接时自动唤醒</div></div>
+        </div>
+        <div class="card"><h3>隐私</h3>
+          <div class="row" style="justify-content:space-between"><span>发送匿名使用统计<br><span class="help">每 10 分钟发一次：随机设备号、系统版本、CPU / 内存、环境数量和用量、出口国家、装了哪些 agent。不发环境名、备注、项目、代理地址、出口 IP、任何登录数据。帮我们了解有多少人在用、哪些功能常用</span></span><label class="switch"><input type="checkbox" id="sTele"><i></i></label></div>
+        </div>
+        <div class="card"><h3>环境镜像</h3>
+          <div class="f"><label>架构</label><div class="seg" id="sArch"><button data-v="amd64">amd64 · 含 Kiteline</button><button data-v="arm64">arm64 · 原生更快</button></div>
+            <div class="help">Apple 芯片上 amd64 经 Rosetta 运行；Kiteline 官方 Linux 版只有 x86_64</div></div>
+          <div class="kv"><div>镜像</div><div id="sImg">—</div></div>
+          <div class="f" style="margin-top:12px"><label>镜像下载地址（预构建的镜像，留空 = 本机构建）</label><input class="in mono" id="sImgUrl" placeholder="https://…/easycc-amd64.tar"></div>
+          <div class="f"><label>SHA-256（可选，下载后校验）</label><input class="in mono" id="sImgSha" placeholder="64 位十六进制"></div>
+          <div class="row" style="margin-top:4px"><button class="btn" onclick="saveImgSrc()">保存</button><button class="btn pri" onclick="pullImage()">下载镜像</button><button class="btn" onclick="buildImage()">本机构建</button></div>
+        </div>
+        <div class="card" id="stCard"><h3>存储</h3>
+          <div class="kv" id="stLoc"></div>
+          <div class="stbar" id="stBar"></div>
+          <div class="stleg" id="stLeg"></div>
+          <div class="row" style="margin-top:var(--sp-2)"><button class="btn" id="stMove" onclick="moveStorage(false)">更改位置…</button><button class="btn" id="stBack" onclick="moveStorage(true)" style="display:none">移回默认位置</button><button class="btn" id="stClean" onclick="cleanStorage()">清理缓存</button></div>
+          <div class="help" id="stHelp" style="margin-top:var(--sp-1)">镜像、环境系统盘和环境主目录一起搬到选的文件夹（可以是外置盘）；同一块盘上瞬间完成，跨盘会复制并核对，搬完删掉旧的。运行中的环境会先停下，搬完自动重新启动。</div></div>
+        <div class="card"><h3>「发送到 easyCC」书签</h3>
+          <div class="help" style="margin-bottom:12px">把下面的按钮拖到电脑浏览器（Chrome、Safari、Edge）的书签栏。以后在任何网页上点它，就能选一个环境、用那个环境的浏览器打开当前链接。</div>
+          <a class="bm" id="bmLink" href="#" onclick="event.preventDefault();toast('把它拖到书签栏，不要点击')">⇪ 发送到 easyCC</a>
+          <div class="help" style="margin-top:12px">书签只在这台电脑上、客户端开着时有效。</div></div>
+        <div class="card"><h3>关于</h3><div class="kv"><div>数据目录</div><div class="mono" id="sData">—</div><div>本机</div><div id="sHost">—</div></div>
+          <div class="help" style="margin-top:12px">客户端和 easycc 命令共用这份数据，在终端里建的环境这里也能看到。</div></div>
+      </div></div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== 新建 / 编辑抽屉 ===== -->
+<div class="mask" id="mask" onclick="closeAll()"></div>
+<div class="drawer" id="drawer">
+  <div class="dh"><h2 id="dTitle">新建环境</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dtabs" id="dtabs"><button data-s="base" class="on">基本信息</button><button data-s="proxy">代理</button><button data-s="proj" id="tabProj">项目目录</button><button data-s="net">网络</button><button data-s="browser">浏览器</button><button data-s="hw">硬件</button></div>
+  <div class="dbody">
+    <div class="dsec on" id="s-base">
+      <div class="f" id="kindF"><label>环境类型</label><div class="typecards" id="kindCards">
+        <div class="tc on" data-k="dev"><b>开发环境</b><span>Claude Code + 浏览器 + 项目目录，可 SSH / VS Code 连接</span></div>
+        <div class="tc" data-k="browser"><b>浏览器环境</b><span>只用独立浏览器：独立出口 IP、时区语言一致，不需要项目目录</span></div></div></div>
+      <div class="f"><label>环境名称 *</label><input class="in mono" id="eName" placeholder="例如 us-west-1" maxlength="40"><div class="help">字母、数字、- 和 _；也是 SSH 主机名 cbox-名称</div></div>
+      <div class="f"><label>分组</label><input class="in" id="eGroup" list="groupList" placeholder="例如 客户 A、美国"><datalist id="groupList"></datalist></div>
+      <div class="f"><label>备注</label><textarea class="in" id="eNote" rows="3" placeholder="用途、账号等"></textarea></div>
+    </div>
+    <div class="dsec" id="s-proxy">
+      <div class="f"><div class="seg" id="pMode"><button data-v="lib" class="on">从代理库选择</button><button data-v="custom">自定义</button></div></div>
+      <div id="pLib"><div class="f"><input class="in search" id="pSearch" placeholder="筛选代理" style="width:100%"></div><div class="plist" id="pPick"></div>
+        <div class="help" id="pEmptyHint" style="margin-top:6px;display:none">代理库是空的：切到「自定义」直接填，或先去代理库添加</div></div>
+      <div id="pCustom" style="display:none">
+        <div class="f"><div class="seg" id="eType"><button data-v="socks5" class="on">SOCKS5</button><button data-v="http">HTTP</button></div></div>
+        <div class="g3"><div class="f"><label>服务器地址 *</label><input class="in mono" id="eHost" placeholder="1.2.3.4"></div><div class="f"><label>端口 *</label><input class="in mono" id="ePort" placeholder="1080"></div></div>
+        <div class="g2"><div class="f"><label>用户名</label><input class="in mono" id="eUser" autocomplete="off"></div><div class="f"><label>密码</label><input class="in mono" id="ePass" type="password" autocomplete="new-password"></div></div>
+        <div class="f"><label>或粘贴整串地址</label><input class="in mono" id="eUrl" placeholder="socks5://user:pass@1.2.3.4:1080"></div>
+      </div>
+      <div class="row" style="margin:6px 0 12px"><button class="btn" id="bTest" onclick="testDrawerProxy()">检测代理</button><span class="c-mute" style="font-size:12px">在本机直接连代理，查出口 IP 和所在地</span></div>
+      <div id="testRes"></div>
+    </div>
+    <div class="dsec" id="s-proj">
+      <div class="f"><label>项目目录 *</label><div class="row"><input class="in mono" id="eDir" placeholder="~/code/my-app"><button class="btn" onclick="pickFolder('eDir')">选择…</button></div>
+        <div class="help">容器里的 /workspace 指向它；Claude、SSH、VS Code 都从这里打开</div></div>
+      <div class="f" id="rootF"><label>项目根目录（可选）</label><div class="row"><input class="in mono" id="eRoot" placeholder="默认 = 项目目录的上一级"><button class="btn" onclick="pickFolder('eRoot')">选择…</button></div>
+        <div class="help">容器能看到、能在环境后台里切换的范围。上一级是主目录时只挂项目本身</div></div>
+    </div>
+    <div class="dsec" id="s-net">
+      <div class="f"><label>中转代理（可选，链式代理）</label><input class="in mono" id="eRelay" placeholder="留空 = 直连代理；填了 = 环境 → 中转 → 代理（落地），例如 socks5://用户名:密码@1.2.3.4:1080" autocomplete="off" spellcheck="false">
+        <div class="help">落地节点直连不稳，或联网检查里「DNS 出口」提示解析服务器不在出口国家时使用</div></div>
+      <div class="g2">
+        <div class="f"><label>固定出口 IP</label><input class="in mono" id="eExpect" placeholder="留空 = 动态 IP，按右边的范围"></div>
+        <div class="f"><label>动态 IP 允许变化的范围</label><select class="in" id="eRule"><option value="country">同一国家（推荐）</option><option value="region">同一州省</option><option value="city">同一城市</option><option value="any">不限地区</option></select></div>
+      </div>
+      <div class="help" style="margin-bottom:var(--sp-3)">出口 IP 不是固定的那个、或者变出了允许的范围，外网就自动关上，保护账号</div>
+      <div class="row" style="justify-content:space-between"><span>自动转发检测到的端口<br><span class="help">默认关：只转你在「端口」里添加的（像 VS Code）</span></span><label class="switch"><input type="checkbox" id="eFwd"><i></i></label></div>
+      <div class="row" style="justify-content:space-between;margin-top:var(--sp-2)"><span>一直运行，不自动休眠<br><span class="help">默认闲置一段时间（设置里调）会停下把内存还给电脑，连接时自动唤醒；挂着长任务的环境可以打开这项</span></span><label class="switch"><input type="checkbox" id="eAwake"><i></i></label></div>
+    </div>
+    <div class="dsec" id="s-browser">
+      <div class="g2">
+        <div class="f"><label>浏览器</label><select class="in" id="eBrowser"><option value="firefox">Firefox</option><option value="chrome">Google Chrome</option></select>
+          <div class="help">都是英文界面；换浏览器后登录数据各自独立</div></div>
+        <div class="f"><label>分辨率</label><select class="in" id="eScreen"><option value="">随机（常见分辨率）</option><option>1920x1080</option><option>1536x864</option><option>1440x900</option><option>1366x768</option><option>1680x1050</option><option>1600x900</option><option>1600x1000</option><option>1280x800</option><option>2560x1440</option></select></div>
+        <div class="f"><label>时区</label><input class="in mono" id="eTz" list="tzs" placeholder="自动（跟随出口 IP）"></div>
+        <div class="f"><label>语言</label><input class="in mono" id="eLang" placeholder="自动（跟随出口国家）"></div>
+      </div>
+      <div class="help" style="margin-bottom:var(--sp-3)">时区、语言留空最好：按出口 IP 自动设，和出口始终一致</div>
+      <datalist id="tzs"><option>America/Los_Angeles<option>America/New_York<option>America/Chicago<option>America/Denver<option>Europe/London<option>Europe/Berlin<option>Europe/Paris<option>Asia/Tokyo<option>Asia/Singapore<option>Asia/Hong_Kong<option>Asia/Seoul<option>Australia/Sydney</datalist>
+      <div class="row" style="justify-content:space-between"><span>启动后自动打开浏览器</span><label class="switch"><input type="checkbox" id="eAuto" checked><i></i></label></div>
+    </div>
+    <div class="dsec" id="s-hw">
+      <div class="g2">
+        <div class="f"><label>CPU 核数</label><select class="in" id="eCpus"><option value="">随机</option><option>2</option><option>4</option><option>6</option><option>8</option></select></div>
+        <div class="f"><label>内存</label><select class="in" id="eMem"><option>2G</option><option selected>4G</option><option>6G</option><option>8G</option><option>12G</option></select></div>
+      </div>
+      <div class="help" style="margin-bottom:var(--sp-3)">网页读到的核数就是这里的；改了重启环境后生效</div>
+      <div class="row" id="personaRow" style="justify-content:space-between"><span>机器身份<br><span class="help">网卡 MAC、主机名、machine-id、字体组合与渲染，每个环境不同、一直不变</span></span><button class="btn sm" onclick="resetPersona()">换一组</button></div>
+    </div>
+  </div>
+  <div class="df"><label class="row" id="startNowL" style="font-size:12.5px;color:var(--mute)"><input type="checkbox" class="cb" id="eStart" checked>创建后立即启动</label>
+    <span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" id="bSave" onclick="saveEnv()">创建</button></div>
+</div>
+
+<!-- ===== 弹窗：添加代理 ===== -->
+<div class="modal" id="mAdd">
+  <div class="dh"><h2>添加代理</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="f"><label>代理（一行一个，可批量）</label><textarea class="in mono" id="aText" rows="8" placeholder="socks5://user:pass@1.2.3.4:1080&#10;http://user:pass@5.6.7.8:8080&#10;1.2.3.4:1080:user:pass"></textarea></div>
+    <div class="g2"><div class="f"><label>名称（单个时）</label><input class="in" id="aName" placeholder="可选"></div><div class="f"><label>分组</label><input class="in" id="aGroup" placeholder="可选"></div></div>
+    <label class="row" style="font-size:12.5px;color:var(--mute)"><input type="checkbox" class="cb" id="aCheck" checked>添加后立即检测</label>
+  </div>
+  <div class="df"><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" onclick="addProxies()">添加</button></div>
+</div>
+
+<!-- ===== 弹窗：任务日志 ===== -->
+<div class="modal" id="mLog" style="width:760px">
+  <div class="dh"><h2 id="logTitle">任务日志</h2><span id="logState"></span><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody"><div class="log" id="logBody"></div></div>
+</div>
+
+<!-- ===== 弹窗：复制环境 ===== -->
+<div class="modal" id="mClone" style="width:420px">
+  <div class="dh"><h2>复制环境</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody"><div class="f"><label>新环境名称</label><input class="in mono" id="cName"></div><div class="help">复制代理、项目目录和全部设置；浏览器登录等数据不复制</div></div>
+  <div class="df"><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" onclick="doClone()">复制</button></div>
+</div>
+
+<!-- ===== 弹窗：在环境浏览器中打开链接 ===== -->
+<div class="modal" id="mOpen" style="width:560px">
+  <div class="dh"><h2>在环境浏览器中打开</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="f"><label>链接</label><input class="in mono" id="oUrl" placeholder="https://"></div>
+    <div class="f"><label>用哪个环境打开（出口 IP、时区、语言都跟这个环境一致）</label><div class="plist" id="oEnvs" style="max-height:300px"></div></div>
+    <label class="row" style="font-size:12.5px;color:var(--mute)"><input type="checkbox" class="cb" id="oShow" checked>打开后显示浏览器桌面</label>
+    <div class="help" id="oMsg" style="margin-top:6px"></div>
+  </div>
+  <div class="df"><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" id="oGo" onclick="doOpenUrl()">打开</button></div>
+</div>
+
+<!-- ===== 弹窗：导出 ===== -->
+<div class="modal" id="mExport" style="width:500px">
+  <div class="dh"><h2 id="xTitle">导出环境</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="help" style="margin-bottom:12px">打成一个 .cbox 文件，可以备份，或者在另一台电脑上导入。项目代码不打包，只记路径。</div>
+    <label class="row f" style="font-size:13px"><input type="checkbox" class="cb" id="xLogin" checked>包含登录数据（浏览器 Cookie / 登录状态、Claude 登录）</label>
+    <label class="row f" style="font-size:13px"><input type="checkbox" class="cb" id="xPass" checked>包含代理密码</label>
+    <div class="card" style="border-color:rgba(251,191,36,.35);font-size:12.5px;color:var(--amber)">⚠ 文件里有登录状态和密码，拿到文件的人能直接登录你的账号，请像密码一样保管。</div>
+    <div class="help" id="xMsg" style="margin-top:12px"></div>
+  </div>
+  <div class="df"><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" id="xGo" onclick="doExport()">导出</button></div>
+</div>
+
+<!-- ===== 弹窗：手机订阅（Clash） ===== -->
+<div class="modal" id="mClash" style="width:580px">
+  <div class="dh"><h2 id="cbTitle">手机订阅</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="klpair"><div class="klqr" id="cbQr"></div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:13.5px;line-height:1.6">用手机上的 Clash 类客户端扫码导入订阅，手机就和<b id="cbWho"></b>走同一个出口 IP。</div>
+        <div class="help" style="margin-top:var(--sp-1)">手机要和这台电脑连在同一个 Wi-Fi / 局域网里。iPhone：Stash、Shadowrocket；安卓：FlClash、Clash Meta for Android；电脑：Clash Verge Rev。</div>
+        <div class="f" id="cbIpF" style="margin-top:var(--sp-2);display:none"><label>用这台电脑的哪个局域网地址</label><select class="in" id="cbIp" onchange="openClash(CB.kind,CB.id,this.value)"></select></div>
+      </div></div>
+    <div class="f" style="margin-top:var(--sp-3)"><label>订阅链接</label><input class="in mono" id="cbUrl" readonly onclick="this.select()"></div>
+    <div id="cbWarn"></div>
+    <details style="margin-top:var(--sp-2)"><summary class="c-mute" style="cursor:pointer;font-size:12.5px">配置内容（Clash / mihomo）</summary><pre class="log" id="cbYaml" style="max-height:220px;margin-top:var(--sp-1)"></pre></details>
+    <div class="help" style="margin-top:var(--sp-2)">链接里带着代理密码，只发给自己的设备。链接固定不变，手机上可以定时更新；改了环境的代理，更新一下订阅就跟着变。</div>
+  </div>
+  <div class="df"><button class="btn" onclick="clashReset()" title="旧链接立即失效">换一个链接</button><span class="spacer"></span><button class="btn" onclick="clashSave()">保存为文件</button><button class="btn pri" onclick="clashCopy()">复制链接</button></div>
+</div>
+
+<!-- ===== 弹窗：导入 ===== -->
+<!-- ===== 弹窗：Kiteline 配对 ===== -->
+<div class="modal" id="mKl" style="width:560px">
+  <div class="dh"><h2 id="klTitle">Kiteline</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody" id="klBody"></div>
+</div>
+
+<!-- ===== 弹窗：登录 easyCC 账号 ===== -->
+<div class="modal" id="mLogin" style="width:440px">
+  <div class="dh"><h2>登录 easyCC</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="help" style="margin-bottom:12px">登录后环境可以同步到云端，换一台电脑登录同一个账号，一键恢复环境（包括浏览器和 agent 的登录状态）。</div>
+    <div class="f"><label>邮箱</label><input class="in" id="lgEmail" type="email" placeholder="you@example.com" autocomplete="email"></div>
+    <div class="f"><label>验证码</label><div class="row"><input class="in mono" id="lgCode" placeholder="6 位数字" maxlength="6" inputmode="numeric" style="letter-spacing:4px">
+      <button class="btn" id="lgSend" onclick="sendCode()" style="flex:none">获取验证码</button></div><div class="help" id="lgMsg"></div></div>
+    <details style="margin-top:6px"><summary class="help" style="cursor:pointer">服务器地址</summary>
+      <div class="row" style="margin-top:6px"><input class="in mono" id="lgUrl" placeholder="https://easycc.betac.cn"><button class="btn" onclick="saveCloudUrl()" style="flex:none">保存</button></div></details>
+  </div>
+  <div class="df"><span class="help">注册即送 7 天免费试用</span><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" id="lgGo" onclick="doLogin()">登录</button></div>
+</div>
+
+<div class="modal" id="mRedeem" style="width:440px">
+  <div class="dh"><h2>兑换码</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="help" style="margin-bottom:12px" id="rdHint">输入购买后拿到的兑换码，开通或续期订阅；已有订阅的，时间自动往后顺延。</div>
+    <div class="f"><label>兑换码</label><input class="in mono" id="rdCode" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="24" autocomplete="off" spellcheck="false" style="letter-spacing:2px;text-transform:uppercase"><div class="help" id="rdMsg"></div></div>
+  </div>
+  <div class="df"><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" id="rdGo" onclick="doRedeem()">兑换</button></div>
+</div>
+
+<div class="modal" id="mImport" style="width:560px">
+  <div class="dh"><h2 id="iTitle">导入环境</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div id="iPick"><label class="card" style="display:block;text-align:center;padding:24px;cursor:pointer;border-style:dashed" id="iDrop">
+      <input type="file" id="iFile" accept=".cbox" style="display:none">
+      <div style="font-size:14px">选择或拖入 .cbox 文件</div><div class="help">由「导出环境」生成</div></label>
+      <div class="help" id="iUpMsg" style="margin-top:12px"></div></div>
+    <div id="iForm" style="display:none">
+      <div class="card" style="margin-bottom:12px"><div class="kv" id="iInfo"></div></div>
+      <div class="f"><label>环境名称</label><input class="in mono" id="iName"></div>
+      <div class="f" id="iDirF"><label>项目目录</label><div class="row"><input class="in mono" id="iDir"><button class="btn" onclick="pickFolder('iDir')">选择…</button></div><div class="help" id="iDirHelp"></div></div>
+      <div class="f" id="iPassF" style="display:none"><label>代理密码（导出时没包含）</label><input class="in mono" id="iPass" type="password" autocomplete="new-password"></div>
+      <label class="row" style="font-size:12.5px;color:var(--mute)"><input type="checkbox" class="cb" id="iStart" checked>导入后立即启动</label>
+    </div>
+  </div>
+  <div class="df"><span class="spacer"></span><button class="btn" onclick="closeAll()">取消</button><button class="btn pri" id="iGo" onclick="doImport()" disabled>导入</button></div>
+</div>
+
+<!-- ===== 弹窗：端口映射（像 VS Code 的「端口」面板）===== -->
+<div class="modal" id="mPorts" style="width:720px">
+  <div class="dh"><h2 id="pTitle">端口</h2><span class="spacer"></span><button class="ib" onclick="closeAll()">✕</button></div>
+  <div class="dbody">
+    <div class="help" style="margin-bottom:12px">添加一个端口（比如 8000），电脑上的 <span class="mono">localhost:8000</span> 就是环境里的 8000。环境自己的浏览器访问 localhost 本来就是环境里的，不用加。</div>
+    <div class="row" style="margin-bottom:12px"><input class="in mono" id="pAdd" placeholder="环境里的端口，如 8000" style="width:190px" inputmode="numeric">
+      <input class="in mono" id="pAddHost" placeholder="电脑端口（默认同号）" style="width:190px" inputmode="numeric"><button class="btn pri" onclick="addPort()">添加端口</button><span class="hint" id="pMsg"></span></div>
+    <div class="tablewrap"><table class="ptable"><thead><tr><th>环境端口</th><th>转发地址</th><th>运行的进程</th><th>状态</th><th style="text-align:right">操作</th></tr></thead><tbody id="pRows"></tbody></table></div>
+    <div id="pDetected" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<div class="menu" id="menu" style="display:none"></div>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const flag=cc=>cc&&cc.length===2?String.fromCodePoint(...[...cc.toUpperCase()].map(c=>127397+c.charCodeAt(0))):"🌐";
+let ENVS=[],PX=[],GROUPS=[],JOBS=[],SYS={},sel=new Set(),psel=new Set(),grp="",editing=null,pMode="lib",pPicked="",eType="socks5",cloneFrom="",logJob="",logTimer=null;
+function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove("on"),2400)}
+async function api(path,body){
+  const r=await fetch(path,body===undefined?{cache:"no-store"}:{method:"POST",headers:{"X-CBox":"1","Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(r.status===403){document.body.innerHTML='<div class="empty" style="padding-top:30vh"><h3>会话已失效</h3>请在终端运行 easycc ui 重新打开客户端</div>';throw new Error("403")}
+  return r.json();
+}
+function ago(t){if(!t)return"—";const s=Date.now()/1000-t;if(s<60)return"刚刚";if(s<3600)return Math.floor(s/60)+" 分钟前";if(s<86400)return Math.floor(s/3600)+" 小时前";if(s<86400*30)return Math.floor(s/86400)+" 天前";return new Date(t*1000).toLocaleDateString()}
+const ICON={
+  play:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l11-7z"/></svg>',
+  stop:'<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
+  globe:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+  term:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
+  code:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg>',
+  dash:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>',
+  link:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+  port:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M8.5 12h7M13 9l3 3-3 3"/></svg>',
+  cloud:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 18a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.5 1.5A3.8 3.8 0 0 1 17.5 18z"/></svg>',
+  more:'<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>'};
+
+/* ---------- 导航 ---------- */
+function go(p){document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.p===p));
+  document.querySelectorAll(".page").forEach(x=>{const on=x.id==="p-"+p;x.classList.toggle("on",on);x.style.display=on?"flex":"none"});
+  if(p==="proxies")loadProxies();if(p==="jobs")loadJobs();if(p==="cloud")loadCloud();if(p==="settings"){loadSystem();loadStorage().catch(()=>{})}
+  try{localStorage.setItem("cbox-mgr-page",p)}catch(e){}}
+document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>go(b.dataset.p));
+
+/* ---------- 环境列表 ---------- */
+async function loadEnvs(){
+  const r=await api("/api/envs");ENVS=r.envs;GROUPS=r.groups;
+  $("cEnv").textContent=ENVS.length;
+  $("rtName").textContent=r.runtime||"未找到";$("rtState").innerHTML=r.runtimeError?`<span class="c-bad">${esc(r.runtimeError)}</span>`:'<span class="c-ok">● 正常</span>';
+  const run=ENVS.filter(e=>e.status==="running").length;$("envSub").textContent=ENVS.length?`共 ${ENVS.length} 个，运行中 ${run} 个`:"";
+  $("groupList").innerHTML=GROUPS.map(g=>`<option value="${esc(g)}">`).join("");
+  $("groups").innerHTML=GROUPS.length?[`<button class="chip${grp?"":" on"}" data-g="">全部</button>`].concat(GROUPS.map(g=>`<button class="chip${grp===g?" on":""}" data-g="${esc(g)}">${esc(g)}</button>`)).join(""):"";
+  USAGE=r.usage||null;renderEnvs();renderUsage();
+  const banner=[];
+  if(r.runtimeError){const lx=/Linux/i.test(SYS.host||navigator.platform);
+    banner.push(lx?`<div class="banner err">⚠ ${esc(r.runtimeError)}。在终端装一个（任选其一），装好后回到这里会自动识别：
+      <span class="mono" style="margin-left:6px">sudo apt install podman</span><button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('sudo apt install podman');toast('已复制')">复制</button>
+      <span class="help">Fedora：sudo dnf install podman · Arch：sudo pacman -S podman · 或安装 Docker</span></div>`
+      :`<div class="banner err">⚠ ${esc(r.runtimeError)}。重新打开 easyCC 试试；还不行请重装 easyCC.app（自带运行时）。</div>`)}
+  else if(SYS.image===false)banner.push(SYS.imageURL?`<div class="banner">还没有环境镜像，先下载一次（之后所有环境共用）。<span class="spacer"></span><button class="btn sm pri" onclick="pullImage()">下载环境镜像</button></div>`
+    :`<div class="banner">还没有环境镜像，第一次启动环境时会自动在本机构建（15–30 分钟）。<span class="spacer"></span><button class="btn sm" onclick="buildImage()">现在构建</button></div>`);
+  $("envBanner").innerHTML=banner.join("");
+  return ENVS;
+}
+/* ---------- 资源占用 ---------- */
+let USAGE=null;
+function gb(n){if(n==null)return"—";if(n>=1<<30)return(n/(1<<30)).toFixed(n>=10*(1<<30)?0:1)+" GB";return Math.round(n/(1<<20))+" MB"}
+function barHTML(r){r=Math.max(0,Math.min(1,r||0));return`<span class="bar"><b class="${r>.9?"bad":r>.7?"warn":""}" style="width:${(r*100).toFixed(1)}%"></b></span>`}
+function ring(r,cls){r=Math.max(0,Math.min(1,r||0));const c=2*Math.PI*8,k=r>.9?"bad":r>.7?"warn":"";
+  return`<svg class="ring ${k}" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="8" class="tr"/>${r>0?`<circle cx="11" cy="11" r="8" class="fg" stroke-dasharray="${(c*r).toFixed(2)} ${c.toFixed(2)}"/>`:""}</svg>`}
+function resHTML(e){
+  const u=e.usage;if(!u)return"";const run=e.status==="running";
+  const cr=run&&u.cpu!=null?u.cpu/(u.cpus||1):0,mr=run&&u.mem!=null?u.mem/(u.memAlloc||1):0;
+  const cpuV=run&&u.cpu!=null?(cr*100).toFixed(cr<.1?1:0)+"%":(u.cpus||"?")+"核";
+  const memV=run&&u.mem!=null?gb(u.mem).replace(" ",""):gb(u.memAlloc).replace(" ","");
+  const dkV=u.disk!=null?gb(u.disk).replace(" ",""):"…";
+  const dr=u.disk!=null&&USAGE&&USAGE.diskTotal?u.disk/USAGE.diskTotal:0;
+  return`<div class="res">
+    <span class="ri" title="CPU：${run&&u.cpu!=null?"已用 "+cpuV+"，":""}分配 ${u.cpus||"?"} 核${u.elastic?"（负载高，已自动加配额）":""}">${ring(cr)}<span><b>${cpuV}</b><i>CPU</i></span></span>
+    <span class="ri" title="内存：${run&&u.mem!=null?"已用 "+gb(u.mem)+" / ":"分配 "}${gb(u.memAlloc)}${u.elastic?"（已按需自动扩容，空闲后收回）":""}">${ring(mr)}<span><b>${memV}</b><i>内存</i></span></span>
+    <span class="ri" title="硬盘：${gb(u.disk)}（系统盘 ${gb(u.diskSystem)} + 浏览器和登录数据 ${gb(u.diskData)}，不含项目目录）">${ring(dr)}<span><b>${dkV}</b><i>硬盘</i></span></span></div>`}
+function renderUsage(){
+  const t=USAGE,el=$("sumbar");if(!t||!ENVS.length){el.style.display="none";return}
+  el.style.display="flex";const run=ENVS.filter(e=>e.status==="running").length;
+  el.innerHTML=`<div class="it">运行中<b>${run}</b><small>/ 共 ${ENVS.length} 个</small></div>
+    <div class="it" title="运行中环境实际用掉的 CPU（1 核跑满 = 1）/ 分配给它们的核数；本机共 ${t.hostCpus} 核">CPU<b>${t.cpuUsed.toFixed(2)} 核</b><small>/ 分配 ${t.cpuAlloc} 核 · 本机 ${t.hostCpus} 核</small>${barHTML(t.hostCpus?t.cpuUsed/t.hostCpus:0)}</div>
+    <div class="it" title="运行中环境实际用的内存 / 分配给它们的内存；本机共 ${gb(t.hostMem)}">内存<b>${gb(t.memUsed)}</b><small>/ 分配 ${gb(t.memAlloc)} · 本机 ${gb(t.hostMem)}</small>${barHTML(t.hostMem?t.memUsed/t.hostMem:0)}</div>
+    <div class="it" title="所有环境（含已停止）占的硬盘：系统盘 + 浏览器和登录数据，不含项目目录；后面是本机硬盘剩余">硬盘<b>${t.ready?gb(t.disk):"统计中…"}</b><small>· 剩余 ${gb(t.diskFree)} / ${gb(t.diskTotal)}</small>${barHTML(t.diskTotal?1-t.diskFree/t.diskTotal:0)}</div>`}
+/* 代理检测按钮：检测中转圈，结束后显示对号 / 叉号，再点再测 */
+const CHK={};
+function chkBtn(n){const c=CHK[n]||{};
+  const ic=c.busy?'<path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/>':c.ok===true?'<path d="m5 12.5 4.5 4.5L19 7.5"/>':c.ok===false?'<path d="M7 7l10 10M17 7 7 17"/>':'<path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/>';
+  const cls=c.busy?" spinning":c.ok===true?" ok":c.ok===false?" bad":"";
+  return`<button class="chk${cls}" data-a="check" title="${esc(c.busy?"正在检测…":c.msg?c.msg+"（点击再测）":"检测代理（出口 IP、延迟）")}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></button>`}
+/* Kiteline：列表里一个图标，角标 = 已配对的手机数；点开配对二维码 / 验证码 */
+function klBtn(e){const run=e.status==="running",k=e.kiteline||{};
+  const t=!run?"Kiteline（环境运行后可用）":!k.installed&&k.at?"这个环境没有 Kiteline":k.devices?`Kiteline：已配对 ${k.devices} 台手机（${k.online} 台在线）· 点击配对新手机`:"Kiteline：手机扫码配对，随时看 agent 在做什么";
+  return`<button class="ib bdgw kl" title="${esc(t)}" data-a="kiteline" ${run?"":"disabled"}><i class="klicon"></i>${run&&k.devices?`<b class="bdg${k.online?" on":""}">${k.devices}</b>`:""}</button>`}
+let KL={name:"",timer:0};
+async function openKiteline(name,renew){KL.name=name;$("klTitle").textContent="Kiteline · "+name;if(!renew){$("klBody").innerHTML='<div class="empty" style="padding:24px"><span class="spin"></span> 正在读取…</div>';openModal("mKl")}
+  const k=await api(`/api/envs/${name}/kiteline${renew?"?renew=1":""}`);if(KL.name!==name)return;
+  const b=$("klBody");clearInterval(KL.timer);
+  if(!k.installed){b.innerHTML=`<div class="help">${esc(k.reason||"这个环境没有 Kiteline")}</div>`;return}
+  if(!k.running||k.starting){b.innerHTML='<div class="empty" style="padding:24px"><span class="spin"></span> Kiteline 正在启动…</div>';setTimeout(()=>{if($("mKl").classList.contains("on"))openKiteline(name,false)},3000);return}
+  const devs=k.devices||[];
+  b.innerHTML=`<div class="klpair"><div class="klqr">${k.qr||""}</div><div>
+      <div class="help">用 Kiteline App 或小程序扫码，或输入配对验证码</div><div class="code6">${esc(k.code||"······")}</div>
+      <div class="help mono" id="klLeft"></div><div class="row" style="margin-top:12px"><button class="btn sm" onclick="openKiteline(KL.name,true)">换一个码</button></div></div></div>
+    <div class="card" style="margin-top:12px"><div class="row"><b>已配对的手机</b><span class="spacer"></span><span class="help">Kiteline ${esc(k.version||"")} · 会话 ${k.sessions||0}</span></div>
+      ${devs.length?devs.map(d=>`<div class="row" style="margin-top:6px"><span class="st ${d.online?"running":"stopped"}"><i></i>${d.online?"在线":"离线"}</span>${esc(d.name||"手机")}<span class="help">${esc(d.via||"")}</span></div>`).join(""):'<div class="help" style="margin-top:6px">还没有手机配对</div>'}</div>
+    <div class="help" style="margin-top:12px">还没装 Kiteline？iPhone 在 App Store 搜「Kiteline」，或用微信小程序「Kiteline」。手机经 Kiteline 远程连接进环境，同样走环境的代理出口。</div>`;
+  const exp=(k.expiry||0)>1e12?k.expiry/1000:(k.expiry||0);const tick=()=>{const left=Math.max(0,Math.round(exp-Date.now()/1000)),el=$("klLeft");if(!el)return clearInterval(KL.timer);el.textContent=left?`${Math.floor(left/60)}:${String(left%60).padStart(2,"0")} 后失效`:"已失效，换一个码";};
+  tick();KL.timer=setInterval(tick,1000);loadEnvs()}
+function renderEnvs(){
+  const q=$("q").value.trim().toLowerCase();
+  const list=ENVS.filter(e=>(!grp||e.group===grp)&&(!q||[e.name,e.note,e.group,e.exit.ip,e.path,e.proxy.host,e.exit.location].join(" ").toLowerCase().includes(q)));
+  $("envEmpty").style.display=ENVS.length?"none":"block";
+  $("envRows").innerHTML=list.map((e,i)=>{
+    const st=e.status==="busy"?`<span class="st busy"><span class="spin" style="width:9px;height:9px;border-width:1.5px"></span>${esc({start:"启动中",stop:"停止中",restart:"重启中",rm:"删除中","apply-net":"更新网络",project:"切换项目",sleep:"休眠中"}[e.job.kind]||"处理中")}</span>`
+      :e.status==="running"?'<span class="st running"><i></i>运行中</span>':e.sleeping?'<span class="st stopped" title="闲置超过设定时间，已停下把内存还给电脑；启动、打开或 SSH / VS Code 连接时自动唤醒"><i></i>休眠中</span>':'<span class="st stopped"><i></i>已停止</span>';
+    const run=e.status==="running",busy=e.status==="busy";
+    const ex=e.exit&&e.exit.ip?`<div class="exitip">${chkBtn(e.name)}${flag(e.exit.country)} ${esc(e.exit.ip)}</div><div class="sub2">${esc(e.exit.location||"")}</div>`:`<div class="exitip c-mute">${chkBtn(e.name)}未检测</div>`;
+    const g=e.gate,gl=g&&g.paused?`<div class="sub2" style="color:var(--amber,#fbbf24)" title="管理后台里点「恢复外网」">外网已暂停</div>`:
+      g&&!g.open?`<div class="sub2" style="color:var(--red,#f87171)" title="${esc(g.reason||"")}${g.nextIn!=null?"（"+g.nextIn+" 秒后自动重试）":""}">外网关闭：${esc(g.title||"检查未通过")}</div>`:"";
+    return `<tr class="${sel.has(e.name)?"sel":""}" data-n="${esc(e.name)}">
+      <td><input type="checkbox" class="cb rowcb" ${sel.has(e.name)?"checked":""}></td>
+      <td><div class="nm">${esc(e.name)}<span class="kind ${e.kind==="browser"?"":"dev"}">${e.kind==="browser"?"浏览器":"开发"}</span>${e.hostAccess?`<span class="kind" style="background:rgba(251,191,36,.12);color:var(--amber)" title="已授权访问本机${e.hostSsh?"（含 SSH）":""}">本机${e.hostSsh?"+SSH":""}</span>`:""}</div><div class="note" title="${esc(e.note)}">${esc(e.note)||'<span class="c-mute">—</span>'}</div></td>
+      <td>${e.group?`<span class="tag">${esc(e.group)}</span>`:'<span class="c-mute">—</span>'}</td>
+      <td title="代理：${esc(e.proxy.type)}://${esc(e.proxy.host)}:${esc(e.proxy.port)}">${ex}${gl}</td>
+      <td><div class="path" title="${esc(e.path)}">${esc(e.pathShort||e.path)}</div><div class="tools">
+        <button class="pcount${(e.forwards||[]).length?"":" none"}" data-a="ports" title="${(e.forwards||[]).length?e.forwards.map(f=>"localhost:"+f.host+(f.host!==f.env?" ← 环境 "+f.env:"")+(f.proc?"（"+f.proc+"）":"")).join("\n")+"\n":""}端口映射（像 VS Code 的「端口」）">${ICON.port}${(e.forwards||[]).length?`<b>${e.forwards.length}</b>`:""}</button>
+        ${cloudBtn(e)}
+        <button class="ib bdgw" title="环境浏览器${e.tabs?"（"+e.tabs+" 个标签页，关掉窗口也保留，下次打开直接恢复）":""}" data-a="desktop" ${run?"":"disabled"}>${ICON.globe}${e.tabs?`<b class="bdg">${e.tabs>99?"99+":e.tabs}</b>`:""}</button>
+        ${klBtn(e)}
+        ${e.kind==="browser"?"":`<button class="ib" title="终端里运行默认 agent（在环境后台「Agent」里安装和切换）" data-a="claude" ${run?"":"disabled"}>${ICON.term}</button>
+        <button class="ib" title="VS Code / Cursor" data-a="vscode" ${run?"":"disabled"}>${ICON.code}</button>`}</div></td>
+      <td>${st}${resHTML(e)}</td>
+      <td class="time">${ago(e.lastOpened)}</td>
+      <td><div class="ops">
+        ${run?`<button class="btn sm pri" data-a="${e.kind==="browser"?"desktop":"admin"}">打开</button>`:`<button class="btn sm pri" data-a="start" ${busy?"disabled":""}>${ICON.play}启动</button>`}
+        <button class="ib" title="更多" data-a="more">${ICON.more}</button></div></td></tr>`}).join("");
+  updSel();
+}
+$("q").oninput=renderEnvs;
+$("groups").onclick=e=>{const c=e.target.closest(".chip");if(c){grp=c.dataset.g;loadEnvs()}};
+function openExternal(url){
+  // App 窗口里：交给系统默认浏览器；普通浏览器里：新标签页
+  if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.cboxopen)window.webkit.messageHandlers.cboxopen.postMessage(url);
+  else window.open(url,"_blank");
+}
+$("envRows").addEventListener("click",async e=>{
+  const fw=e.target.closest(".fwd");if(fw){openExternal(fw.dataset.url);return}
+  const tr=e.target.closest("tr");if(!tr)return;const n=tr.dataset.n,env=ENVS.find(x=>x.name===n);
+  if(e.target.classList.contains("rowcb")){e.target.checked?sel.add(n):sel.delete(n);tr.classList.toggle("sel",e.target.checked);updSel();return}
+  const b=e.target.closest("[data-a]");if(!b)return;const a=b.dataset.a;
+  if(a==="start"){await act(n,"start");toast("已加入任务：启动 "+n)}
+  else if(a==="admin"){window.open(env.adminURL,"_blank");api(`/api/envs/${n}/opened`,{})}
+  else if(a==="desktop"){window.open(env.desktopURL,"_blank");api(`/api/envs/${n}/opened`,{})}
+  else if(a==="link"){openUrlModal("",n)}
+  else if(a==="kiteline"){openKiteline(n,false)}
+  else if(a==="cloud"){if(!ACCT||!ACCT.loggedIn){openLogin();return}const r=await api(`/api/envs/${n}/cloud-push`,{});toast(r.ok?"开始同步 "+n+" 到云端":r.message);if(r.ok){pollFast();loadJobs()}}
+  else if(a==="check"){if((CHK[n]||{}).busy)return;CHK[n]={busy:true};renderEnvs();
+    let r;try{r=await api(`/api/envs/${n}/check`,{})}catch(x){r={ok:false,error:"请求失败"}}
+    CHK[n]={ok:!!r.ok,msg:r.ok?`可用 · ${r.ip} · ${r.latency} ms`:"不可用："+(r.error||"")};
+    toast(CHK[n].msg);await loadEnvs().catch(()=>renderEnvs())}
+  else if(a==="ports"){openPorts(n)}
+  else if(a==="claude"){const r=await api(`/api/envs/${n}/terminal`,{what:"claude"});toast(r.message)}
+  else if(a==="vscode"){toast("正在打开 VS Code…");const r=await api(`/api/envs/${n}/vscode`,{});toast(r.message)}
+  else if(a==="more")showMenu(b,env);
+});
+async function act(n,a){const r=await api(`/api/envs/${n}/${a}`,{});await loadEnvs();pollFast();return r}
+function updSel(){const n=sel.size;["bStart","bStop","bRm"].forEach(id=>$(id).disabled=!n);$("selInfo").textContent=n?`已选 ${n} 个`:"";
+  $("all").checked=n&&ENVS.every(e=>sel.has(e.name))}
+$("all").onchange=e=>{sel=new Set(e.target.checked?ENVS.map(x=>x.name):[]);renderEnvs()};
+async function batch(a){
+  const names=[...sel];if(!names.length)return;
+  if(a==="rm"&&!confirm(`删除选中的 ${names.length} 个环境？浏览器、Claude 登录等数据会一起删掉（项目目录不动）。`))return;
+  const r=await api("/api/envs/batch",{action:a,names});toast(r.message);if(a==="rm")sel.clear();loadEnvs();pollFast();
+}
+function showMenu(btn,env){
+  const m=$("menu"),run=env.status==="running";
+  m.innerHTML=`<button data-m="edit">编辑</button><button data-m="clone">复制环境</button>
+    <button data-m="clash">手机订阅（Clash）</button><button data-m="host">${env.hostAccess?"撤销访问本机":"一键授权访问本机"}</button>
+    ${run?`${env.kind==="browser"?`<button data-m="admin">环境后台</button>`:`<button data-m="shell">打开终端（不启动 Claude）</button>`}<hr><button data-m="restart">重启</button><button data-m="stop">停止</button>`:""}
+    <hr><button data-m="rm" class="danger">删除环境</button>`;
+  const r=btn.getBoundingClientRect();m.style.display="block";
+  m.style.left=Math.min(r.right-170,innerWidth-180)+"px";m.style.top=Math.min(r.bottom+4,innerHeight-m.offsetHeight-8)+"px";
+  m.onclick=async e=>{const x=e.target.closest("[data-m]");if(!x)return;m.style.display="none";const k=x.dataset.m,n=env.name;
+    if(k==="link")openUrlModal("",n);
+    if(k==="cloudforce"){if(!confirm("用本机的 "+n+" 覆盖云端版本？别的电脑同步上去的改动会丢。"))return;const r=await api(`/api/envs/${n}/cloud-push`,{force:true});toast(r.ok?"开始强制同步":r.message);if(r.ok)pollFast()}
+    if(k==="clash")openClash("env",n);
+    if(k==="edit")openEditor(env);
+    else if(k==="clone"){cloneFrom=n;$("cName").value=n+"-copy";openModal("mClone")}
+    else if(k==="check"){toast("正在检测 "+n+" 的代理…");const r=await api(`/api/envs/${n}/check`,{});toast(r.ok?`可用 · ${r.ip} · ${r.latency} ms`:"不可用："+r.error);loadEnvs()}
+    else if(k==="admin")window.open(env.adminURL,"_blank");
+    else if(k==="export")openExport(env);
+    else if(k==="host"){if(!env.hostAccess&&!confirm(`授权 ${n} 访问你电脑本机上的服务（localhost 上的端口）？环境里访问 host.internal:端口 就是本机 localhost:端口，本地证书自动导入。随时可以撤销。`))return;
+      toast("处理中…");const r=await api(`/api/envs/${n}/hostaccess`,{access:!env.hostAccess});toast(r.message);loadEnvs()}
+    else if(k==="shell"){const r=await api(`/api/envs/${n}/terminal`,{what:"shell"});toast(r.message)}
+    else if(k==="rm"){if(confirm(`删除环境 ${n}？浏览器、Claude 登录等数据会一起删掉（项目目录不动）。`)){await act(n,"rm");toast("正在删除 "+n)}}
+    else{await act(n,k);toast("已加入任务")}};
+}
+document.addEventListener("click",e=>{if(!e.target.closest("#menu")&&!e.target.closest('[data-a="more"]'))$("menu").style.display="none"});
+
+/* ---------- 抽屉：新建 / 编辑 ---------- */
+document.querySelectorAll("#dtabs button").forEach(b=>b.onclick=()=>dtab(b.dataset.s));
+function dtab(s){document.querySelectorAll("#dtabs button").forEach(b=>b.classList.toggle("on",b.dataset.s===s));document.querySelectorAll(".dsec").forEach(x=>x.classList.toggle("on",x.id==="s-"+s))}
+document.querySelectorAll("#pMode button").forEach(b=>b.onclick=()=>setPMode(b.dataset.v));
+function setPMode(v){pMode=v;document.querySelectorAll("#pMode button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));$("pLib").style.display=v==="lib"?"":"none";$("pCustom").style.display=v==="custom"?"":"none";$("testRes").innerHTML=""}
+document.querySelectorAll("#eType button").forEach(b=>b.onclick=()=>setEType(b.dataset.v));
+function setEType(v){eType=v;document.querySelectorAll("#eType button").forEach(b=>b.classList.toggle("on",b.dataset.v===v))}
+$("eUrl").onchange=()=>{try{const v=$("eUrl").value.trim();if(!v)return;const u=new URL(v.includes("://")?v:"socks5://"+v);
+  setEType(u.protocol.startsWith("http")?"http":"socks5");$("eHost").value=u.hostname;$("ePort").value=u.port||"1080";$("eUser").value=decodeURIComponent(u.username);$("ePass").value=decodeURIComponent(u.password);$("eUrl").value="";toast("已填入")}catch(e){toast("地址格式不对")}};
+function renderPick(){
+  const q=$("pSearch").value.trim().toLowerCase();
+  const list=PX.filter(p=>!q||[p.name,p.host,p.group,(p.check||{}).ip,(p.check||{}).countryName].join(" ").toLowerCase().includes(q));
+  $("pEmptyHint").style.display=PX.length?"none":"";
+  $("pPick").innerHTML=list.length?list.map(p=>{const c=p.check||{};return `<div class="pitem${pPicked===p.id?" on":""}" data-id="${p.id}">
+    <input type="radio" name="pp" ${pPicked===p.id?"checked":""} style="accent-color:#f2f3f5">
+    <div style="flex:1;min-width:0"><div class="mono" style="font-size:12.5px">${esc(p.name||p.host+":"+p.port)}</div>
+    <div class="sub2">${esc(p.type)}://${esc(p.host)}:${p.port}${p.group?" · "+esc(p.group):""}</div></div>
+    <div style="text-align:right">${c.at?(c.ok?`<div class="exitip">${flag(c.country)} ${esc(c.ip)}</div><div class="sub2">${c.latency} ms</div>`:'<span class="c-bad" style="font-size:12px">不可用</span>'):'<span class="c-mute" style="font-size:12px">未检测</span>'}</div></div>`}).join(""):'<div class="empty" style="padding:24px">代理库里没有可选的代理</div>';
+}
+$("pSearch").oninput=renderPick;
+$("pPick").onclick=e=>{const it=e.target.closest(".pitem");if(it){pPicked=it.dataset.id;renderPick();$("testRes").innerHTML=""}};
+let eKind="dev";
+document.querySelectorAll("#kindCards .tc").forEach(c=>c.onclick=()=>setKind(c.dataset.k));
+function setKind(k){eKind=k;document.querySelectorAll("#kindCards .tc").forEach(c=>c.classList.toggle("on",c.dataset.k===k));
+  $("tabProj").textContent=k==="browser"?"文件夹（可选）":"项目目录";
+  $("eDir").placeholder=k==="browser"?"可选：留空就用独立文件夹（下载的文件在这里）":"~/code/my-app";$("rootF").style.display=(k==="browser"||editing)?"none":""}
+async function openEditor(env){
+  editing=env?env.name:null;await loadProxies(true);
+  $("dTitle").textContent=env?"编辑环境 · "+env.name:"新建环境";$("bSave").textContent=env?"保存":"创建";
+  $("eName").value=env?env.name:"";$("eName").disabled=!!env;$("eGroup").value=env?env.group:(grp||"");$("eNote").value=env?env.note:"";
+  pPicked=env?env.proxyId:"";setPMode(env?(env.proxyId?"lib":"custom"):(PX.length?"lib":"custom"));
+  setEType(env?env.proxy.type:"socks5");$("eHost").value=env&&!env.proxyId?env.proxy.host:"";$("ePort").value=env&&!env.proxyId?env.proxy.port:"";
+  $("eUser").value=env&&!env.proxyId?env.proxy.user:"";$("ePass").value="";$("ePass").placeholder=env&&env.proxy.hasPass?"•••••• 不改就留空":"";
+  $("eDir").value=env?env.path:"";$("eRoot").value="";setKind(env?env.kind:"dev");$("kindF").style.display=env?"none":"";
+  $("eTz").value=env?env.tzOverride:"";$("eLang").value=env?env.acceptLanguage:"";$("eExpect").value=env?env.expectIP:"";$("eRule").value=env&&env.exitRule||"country";$("eRelay").value=env&&env.relay||"";
+  $("eScreen").value=env&&env.screen?env.screen:"";if(env&&env.screen&&$("eScreen").value!==env.screen){$("eScreen").insertAdjacentHTML("beforeend",`<option>${esc(env.screen)}</option>`);$("eScreen").value=env.screen}$("eBrowser").value=env&&env.browser||"firefox";$("personaRow").style.display=env?"":"none";EDITING=env&&env.name;$("eCpus").value=env&&env.cpus?env.cpus:"";$("eMem").value=env&&env.memory?env.memory:"4G";
+  $("eAuto").checked=env?env.autostartBrowser:true;$("eFwd").checked=env?!!env.forwardLocalhost:false;$("eAwake").checked=env?!!env.keepAwake:false;$("startNowL").style.display=env?"none":"";
+  $("testRes").innerHTML="";renderPick();dtab("base");
+  $("mask").classList.add("on");$("drawer").classList.add("on");setTimeout(()=>(env?$("eGroup"):$("eName")).focus(),250);
+}
+function closeAll(){$("mask").classList.remove("on");$("drawer").classList.remove("on");document.querySelectorAll(".modal").forEach(m=>m.classList.remove("on"));clearInterval(logTimer);logTimer=null}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeAll()});
+function drawerProxy(){return pMode==="lib"?{proxyId:pPicked}:{proxy:{type:eType,host:$("eHost").value.trim(),port:$("ePort").value.trim(),user:$("eUser").value,pass:$("ePass").value}}}
+function renderTest(r){
+  $("testRes").innerHTML=r.ok?`<div class="card ok"><div class="row" style="margin-bottom:6px"><b class="c-ok">✓ 代理可用</b><span class="spacer"></span><span class="mono c-mute">${r.latency} ms</span></div>
+    <div class="kv"><div>出口 IP</div><div class="mono">${flag(r.country)} ${esc(r.ip)}</div><div>位置</div><div>${esc([r.city,r.countryName].filter(Boolean).join(", "))}</div>
+    <div>时区</div><div class="mono">${esc(r.timezone)}</div><div>运营商</div><div>${esc(r.isp)}</div><div>IP 类型</div><div>${r.hosting?'<span class="c-warn">机房 IP（更容易被风控）</span>':'<span class="c-ok">住宅 / 运营商</span>'}</div></div></div>`
+    :`<div class="card bad"><b class="c-bad">✗ 代理不可用</b><div class="c-mute" style="margin-top:4px">${esc(r.error)}</div></div>`;
+}
+async function testDrawerProxy(){
+  const p=drawerProxy();if(pMode==="lib"&&!pPicked){toast("先选一个代理");return}
+  const b=$("bTest");b.disabled=true;b.innerHTML='<span class="spin"></span> 检测中';
+  try{renderTest(await api("/api/proxies/test",Object.assign({env:editing||""},p)))}catch(e){}
+  b.disabled=false;b.textContent="检测代理";
+}
+async function pickFolder(id){const r=await api("/api/pick-folder",{start:$(id).value});if(r.ok)$(id).value=r.path;else if(r.message)toast(r.message)}
+async function saveEnv(){
+  const body=Object.assign({name:$("eName").value.trim(),group:$("eGroup").value.trim(),note:$("eNote").value.trim(),dir:$("eDir").value.trim(),root:$("eRoot").value.trim(),
+    tzOverride:$("eTz").value.trim(),acceptLanguage:$("eLang").value.trim(),expectIP:$("eExpect").value.trim(),exitRule:$("eRule").value,relay:$("eRelay").value.trim(),screen:$("eScreen").value,browser:$("eBrowser").value,cpus:$("eCpus").value,memory:$("eMem").value,
+    autostartBrowser:$("eAuto").checked,forwardLocalhost:$("eFwd").checked,keepAwake:$("eAwake").checked,startNow:$("eStart").checked,kind:eKind},drawerProxy());
+  if(!editing&&!body.name){dtab("base");toast("请填环境名称");return}
+  if(pMode==="lib"&&!pPicked){dtab("proxy");toast("请选择一个代理");return}
+  if(pMode==="custom"&&(!body.proxy.host||!body.proxy.port)){dtab("proxy");toast("请填代理地址和端口");return}
+  if(!body.dir&&eKind==="dev"){dtab("proj");toast("请选择项目目录");return}
+  const b=$("bSave");b.disabled=true;
+  try{const r=await api(editing?`/api/envs/${editing}/edit`:"/api/envs",body);toast(r.message);if(r.ok){closeAll();await loadEnvs();pollFast()}}
+  finally{b.disabled=false}
+}
+async function doClone(){const r=await api(`/api/envs/${cloneFrom}/clone`,{name:$("cName").value.trim()});toast(r.message);if(r.ok){closeAll();loadEnvs()}}
+
+/* ---------- 端口映射 ---------- */
+let pEnv="",pTimer=null;
+async function openPorts(n){pEnv=n;$("pTitle").textContent="端口 · "+n;$("pMsg").textContent="";$("pAdd").value="";$("pAddHost").value="";openModal("mPorts");
+  await loadPorts();clearInterval(pTimer);pTimer=setInterval(()=>{if($("mPorts").classList.contains("on"))loadPorts();else clearInterval(pTimer)},2500);setTimeout(()=>$("pAdd").focus(),50)}
+async function loadPorts(){
+  const r=await api(`/api/envs/${pEnv}/ports`);
+  $("pRows").innerHTML=r.ports.length?r.ports.map(p=>`<tr>
+    <td class="mono"><b>${p.env}</b>${p.manual?"":' <span class="tag">自动</span>'}</td>
+    <td class="mono">${p.host?`<a href="#" data-open="http://localhost:${p.host}">localhost:${p.host}</a>${p.host!==p.wantHost?` <span class="c-warn" title="电脑上 ${p.wantHost} 被占用">（${p.wantHost} 被占用）</span>`:""}`:'<span class="c-mute">'+(r.running?"等待中":"环境没在运行")+'</span>'}</td>
+    <td class="mono c-mute">${esc(p.proc)||"—"}</td>
+    <td>${p.listening?'<span class="c-ok">● 服务运行中</span>':'<span class="c-mute">○ 环境里还没有服务在监听</span>'}</td>
+    <td style="text-align:right;white-space:nowrap">${p.host?`<button class="btn sm" data-open="http://localhost:${p.host}">打开</button> `:""}${p.manual?`<button class="btn sm" data-rm="${p.env}">停止转发</button>`:""}</td></tr>`).join("")
+    :`<tr><td colspan="5" class="c-mute" style="padding:18px;text-align:center">还没有转发的端口</td></tr>`;
+  $("pDetected").innerHTML=r.detected&&r.detected.length?`<div class="hint" style="margin-bottom:6px">环境里检测到正在监听的端口：</div>`+
+    r.detected.map(d=>`<span class="fwd idle" data-add="${d.port}" title="点一下转发">+ ${d.port}${d.proc?` <small>${esc(d.proc)}</small>`:""}</span>`).join(""):(r.running?"":'<div class="hint">环境启动后，这里会列出环境里正在监听的端口</div>');
+  if(r.error&&r.running)$("pMsg").innerHTML=`<span class="c-warn">${esc(r.error)}</span>`;
+}
+async function addPort(port){
+  const p=port||$("pAdd").value.trim(),h=port?"":$("pAddHost").value.trim();if(!p)return;
+  const r=await api(`/api/envs/${pEnv}/ports`,{action:"add",port:p,hostPort:h});$("pMsg").innerHTML=`<span class="${r.ok?"c-ok":"c-bad"}">${esc(r.message)}</span>`;
+  if(r.ok){$("pAdd").value="";$("pAddHost").value="";setTimeout(loadPorts,2500);loadPorts()}
+}
+$("mPorts").addEventListener("click",async e=>{
+  const o=e.target.closest("[data-open]");if(o){e.preventDefault();openExternal(o.dataset.open);return}
+  const rm=e.target.closest("[data-rm]");if(rm){const r=await api(`/api/envs/${pEnv}/ports`,{action:"remove",port:rm.dataset.rm});$("pMsg").textContent=r.message;loadPorts();return}
+  const ad=e.target.closest("[data-add]");if(ad)addPort(ad.dataset.add)});
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.target.id==="pAdd"||e.target.id==="pAddHost"))addPort()});
+
+/* ---------- 打开链接 ---------- */
+let oPicked="";
+function openUrlModal(url,env){
+  $("oUrl").value=url||"";$("oMsg").textContent="";
+  const runFirst=[...ENVS].sort((a,b)=>(b.status==="running")-(a.status==="running")||(b.lastOpened||0)-(a.lastOpened||0));
+  oPicked=env||(runFirst[0]||{}).name||"";
+  const draw=()=>{$("oEnvs").innerHTML=runFirst.length?runFirst.map(e=>`<div class="pitem${oPicked===e.name?" on":""}" data-n="${esc(e.name)}">
+    <input type="radio" ${oPicked===e.name?"checked":""} style="accent-color:#f2f3f5"><div style="flex:1;min-width:0"><div class="nm" style="font-size:13px">${esc(e.name)}<span class="kind ${e.kind==="browser"?"":"dev"}">${e.kind==="browser"?"浏览器":"开发"}</span></div>
+    <div class="sub2">${e.exit&&e.exit.ip?flag(e.exit.country)+" "+esc(e.exit.ip)+" · "+esc(e.exit.location||""):esc(e.proxy.host)}</div></div>
+    ${e.status==="running"?'<span class="st running"><i></i>运行中</span>':'<span class="st stopped"><i></i>会先启动</span>'}</div>`).join(""):'<div class="empty" style="padding:24px">还没有环境，先新建一个</div>'};
+  draw();$("oEnvs").onclick=e=>{const it=e.target.closest(".pitem");if(it){oPicked=it.dataset.n;draw()}};
+  openModal("mOpen");setTimeout(()=>(url?$("oGo"):$("oUrl")).focus(),50);
+}
+async function doOpenUrl(){
+  let u=$("oUrl").value.trim();if(!u){toast("请填链接");return}if(!/^https?:\/\//i.test(u))u="https://"+u;
+  if(!oPicked){toast("请选择环境");return}
+  const env=ENVS.find(e=>e.name===oPicked),show=$("oShow").checked,b=$("oGo");
+  // 先开一个空窗口占位（异步回来再 window.open 会被拦截），任务完成后再跳到浏览器桌面
+  const win=show?window.open("about:blank","_blank"):null;
+  if(win)win.document.write('<body style="background:#0e0e10;color:#8e8e93;font:14px system-ui;display:flex;align-items:center;justify-content:center;height:100vh">正在环境 '+esc(oPicked)+' 中打开…</body>');
+  b.disabled=true;$("oMsg").innerHTML='<span class="spin"></span> '+(env.status==="running"?"正在打开…":"环境没在运行，先启动（约 20–60 秒）…");
+  const r=await api(`/api/envs/${oPicked}/open-url`,{url:u});
+  if(!r.ok){b.disabled=false;$("oMsg").innerHTML=`<span class="c-bad">${esc(r.message)}</span>`;if(win)win.close();return}
+  pollFast();
+  for(let i=0;i<240;i++){await new Promise(x=>setTimeout(x,1000));const j=await api("/api/jobs/"+r.job);
+    if(j.state==="done"){const e2=(await loadEnvs()).find(e=>e.name===oPicked);if(win&&e2)win.location=e2.desktopURL;closeAll();toast("已在 "+oPicked+" 的浏览器中打开");break}
+    if(j.state==="failed"){$("oMsg").innerHTML=`<span class="c-bad">打开失败：${esc(j.lines.slice(-1)[0]||"")}</span>`;if(win)win.close();break}}
+  b.disabled=false;
+}
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="oUrl")doOpenUrl()});
+
+/* ---------- 导出 / 导入 ---------- */
+const fmtBytes=n=>n>1<<30?(n/(1<<30)).toFixed(1)+" GB":n>1<<20?(n/(1<<20)).toFixed(1)+" MB":Math.max(1,Math.round(n/1024))+" KB";
+let xEnv=null,iTmp=null,iMeta=null;
+function openExport(env){xEnv=env;$("xTitle").textContent="导出环境 · "+env.name;
+  $("xMsg").innerHTML=env.status==="running"?'<span class="c-warn">环境正在运行，浏览器正在写的数据可能不完整，最好先停止再导出。</span>':"";openModal("mExport")}
+async function doExport(){
+  const b=$("xGo");b.disabled=true;$("xMsg").innerHTML='<span class="spin"></span> 正在打包…';
+  try{const r=await api(`/api/envs/${xEnv.name}/export`,{withLogin:$("xLogin").checked,withPassword:$("xPass").checked});
+    if(!r.ok){$("xMsg").innerHTML=`<span class="c-bad">${esc(r.message)}</span>`;return}
+    const a=document.createElement("a");a.href=r.url;a.download=r.filename;document.body.appendChild(a);a.click();a.remove();
+    closeAll();toast(`已导出 ${r.filename}（${r.files} 个文件，压缩后 ${fmtBytes(r.archive)}）`)}
+  finally{b.disabled=false}
+}
+function openImport(){$("iTitle").textContent="导入环境";iTmp=null;$("iPick").style.display="";$("iForm").style.display="none";$("iGo").disabled=true;$("iUpMsg").textContent="";$("iFile").value="";openModal("mImport")}
+$("iFile").onchange=e=>{if(e.target.files[0])uploadImport(e.target.files[0])};
+$("iDrop").ondragover=e=>{e.preventDefault()};$("iDrop").ondrop=e=>{e.preventDefault();if(e.dataTransfer.files[0])uploadImport(e.dataTransfer.files[0])};
+async function uploadImport(f){
+  $("iUpMsg").innerHTML=`<span class="spin"></span> 正在读取 ${esc(f.name)}（${fmtBytes(f.size)}）…`;
+  const r=await (await fetch("/api/import/inspect",{method:"POST",headers:{"X-CBox":"1","Content-Type":"application/octet-stream"},body:f})).json();
+  if(!r.ok){$("iUpMsg").innerHTML=`<span class="c-bad">${esc(r.message)}</span>`;return}
+  showImportForm(r)}
+function showImportForm(r){
+  iTmp=r.tmp;iMeta=r;$("iPick").style.display="none";$("iForm").style.display="";$("iGo").disabled=false;
+  $("iInfo").innerHTML=`<div>原名称</div><div class="mono">${esc(r.name)} <span class="kind ${r.kind==="browser"?"":"dev"}">${r.kind==="browser"?"浏览器":"开发"}</span></div>
+    <div>代理</div><div class="mono">${esc(r.proxy.type)}://${esc(r.proxy.host)}:${r.proxy.port}</div>
+    <div>上次出口</div><div class="mono">${r.exit&&r.exit.ip?flag(r.exit.country)+" "+esc(r.exit.ip)+" · "+esc(r.exit.location||""):"—"}</div>
+    <div>用户数据</div><div>${r.files} 个文件，${fmtBytes(r.bytes)}${r.withLogin?"，含登录状态":"，不含登录状态"}</div>
+    <div>${r.cloudName?"同步于":"导出于"}</div><div>${r.exportedAt?new Date(r.exportedAt*1000).toLocaleString():"—"}${r.cloudName?` · 云端 v${r.cloudVersion}`:""}</div>`;
+  $("iName").value=r.suggestedName;$("iDirF").style.display=r.kind==="browser"?"none":"";
+  $("iDir").value=r.path||"";$("iDirHelp").innerHTML=r.kind==="browser"?"":(r.pathExists?'<span class="c-ok">这台电脑上有这个目录</span>':'<span class="c-warn">这台电脑上没有这个目录：选一个已有的项目目录，或者照原路径新建一个空目录</span>');
+  $("iPassF").style.display=r.needPassword?"":"none";$("iPass").value="";
+}
+async function doImport(){
+  if(!iTmp)return;const b=$("iGo");b.disabled=true;
+  try{const r=await api("/api/import/commit",{tmp:iTmp,name:$("iName").value.trim(),dir:iMeta.kind==="browser"?"":$("iDir").value.trim(),pass:$("iPass").value,startNow:$("iStart").checked});
+    toast(r.message);if(r.ok){closeAll();await loadEnvs();pollFast()}}
+  finally{b.disabled=false}
+}
+
+
+/* ---------- easyCC 账号 / 云端同步 ---------- */
+let ACCT=null,CLOUDENVS=[];
+async function loadAcct(){try{ACCT=await api("/api/cloud")}catch(e){return}
+  const u=ACCT.user,el=$("acct");if(!el)return;
+  if(!ACCT.loggedIn){el.innerHTML=`<div class="av">?</div><div style="min-width:0"><b>登录 easyCC</b><div class="help">环境云端同步、换电脑一键恢复</div></div>`;return}
+  const sub=u&&u.subscription,left=sub?Math.max(0,Math.ceil((sub.expiresAt-Date.now()/1000)/86400)):0;
+  el.innerHTML=`<div class="av">${esc((ACCT.email||"?")[0].toUpperCase())}</div><div style="min-width:0"><b title="${esc(ACCT.email)}">${esc(ACCT.email)}</b>
+    <div class="help">${sub?`${esc(sub.planName)} · 剩 ${left} 天`:'<span class="c-warn">没有有效订阅</span>'}</div></div>`}
+function acctClick(){if(ACCT&&ACCT.loggedIn)go("cloud");else openLogin()}
+function openLogin(){$("lgMsg").textContent="";$("lgCode").value="";$("lgUrl").value=ACCT?ACCT.url:"";openModal("mLogin");setTimeout(()=>$("lgEmail").focus(),50)}
+let sendT=0;
+async function sendCode(){const email=$("lgEmail").value.trim();if(!email){$("lgMsg").innerHTML='<span class="c-bad">先填邮箱</span>';return}
+  const b=$("lgSend");b.disabled=true;const r=await api("/api/cloud/code",{email});
+  $("lgMsg").innerHTML=r.ok?`<span class="c-ok">${esc(r.message)}</span>`:`<span class="c-bad">${esc(r.message)}</span>`;
+  let n=r.ok?60:(r.data&&r.data.retryAfter)||0;if(!n){b.disabled=false;return}
+  clearInterval(sendT);sendT=setInterval(()=>{n--;b.textContent=n>0?`${n} 秒后重发`:"获取验证码";if(n<=0){clearInterval(sendT);b.disabled=false}},1000);
+  if(r.ok)$("lgCode").focus()}
+async function doLogin(){const b=$("lgGo");b.disabled=true;
+  try{const r=await api("/api/cloud/login",{email:$("lgEmail").value.trim(),code:$("lgCode").value.trim()});
+    if(!r.ok){$("lgMsg").innerHTML=`<span class="c-bad">${esc(r.message)}</span>`;return}
+    closeAll();toast("已登录 "+r.user.email);await loadAcct();if($("p-cloud").classList.contains("on"))loadCloud();renderEnvs()}
+  finally{b.disabled=false}}
+$("lgCode").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});
+async function saveCloudUrl(){const r=await api("/api/cloud/url",{url:$("lgUrl").value.trim()});toast(r.message);loadAcct()}
+function openRedeem(hint){if(!ACCT||!ACCT.loggedIn){openLogin();return}
+  $("rdMsg").textContent="";$("rdCode").value="";$("rdHint").textContent=hint||"输入购买后拿到的兑换码，开通或续期订阅；已有订阅的，时间自动往后顺延。";
+  openModal("mRedeem");setTimeout(()=>$("rdCode").focus(),50)}
+async function doRedeem(){const code=$("rdCode").value.trim();if(!code){$("rdMsg").innerHTML='<span class="c-bad">先填兑换码</span>';return}
+  const b=$("rdGo");b.disabled=true;
+  try{const r=await api("/api/cloud/redeem",{code});
+    if(!r.ok){$("rdMsg").innerHTML=`<span class="c-bad">${esc(r.message)}</span>`;return}
+    closeAll();toast(r.message);await loadAcct();if($("p-cloud").classList.contains("on"))loadCloud()}
+  finally{b.disabled=false}}
+$("rdCode").addEventListener("keydown",e=>{if(e.key==="Enter")doRedeem()});
+async function cloudLogout(){if(!confirm("退出 easyCC 账号？本机环境不受影响。"))return;await api("/api/cloud/logout",{});await loadAcct();loadCloud();renderEnvs()}
+function cloudBtn(e){return"";const c=e.cloud||{},syn=c.version>0;
+  const t=!ACCT||!ACCT.loggedIn?"同步到云端（先登录 easyCC 账号）":syn?`已同步到云端 v${c.version}（${ago(c.syncedAt)}）· 点击再次同步`:"同步到云端";
+  return`<button class="ib${syn?" synced":""}" title="${esc(t)}" data-a="cloud">${ICON.cloud}</button>`}
+async function loadCloud(){
+  await loadAcct();const box=$("cloudBody");
+  if(!ACCT.loggedIn){$("cloudSub").textContent="";box.innerHTML=`<div class="empty"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#f2f3f5" stroke-width="1.2"><path d="M7 18a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.5 1.5A3.8 3.8 0 0 1 17.5 18z"/></svg>
+    <h3>登录 easyCC 账号</h3><div>环境同步到云端后，换一台电脑登录，一键恢复：代理、浏览器登录状态、agent 登录都在。</div>
+    <div style="margin-top:18px"><button class="btn pri" onclick="openLogin()">登录 / 注册</button></div></div>`;$("cCloud").textContent=0;return}
+  box.innerHTML='<div class="empty"><span class="spin"></span> 正在读取云端…</div>';
+  const r=await api("/api/cloud/envs");
+  if(!r.ok){box.innerHTML=`<div class="banner err">⚠ ${esc(r.message)}<span class="spacer"></span><button class="btn sm" onclick="openLogin()">服务器设置</button></div>`;return}
+  CLOUDENVS=r.envs;$("cCloud").textContent=r.envs.length;
+  const u=ACCT.user||{},sub=u.subscription,st=r.storage||{used:0,quota:1};
+  $("cloudSub").textContent=`${ACCT.email} · ${r.envs.length} 个云端环境`;
+  const local=new Set(ENVS.map(e=>(e.cloud&&e.cloud.name)||e.name));
+  const notSynced=ENVS.filter(e=>!(e.cloud&&e.cloud.version));
+  box.innerHTML=`<div class="cgrid">
+    <div class="card cstat"><div class="help">账号</div><b>${esc(ACCT.email)}</b><div class="row" style="margin-top:6px"><button class="btn sm" onclick="cloudLogout()">退出登录</button></div></div>
+    <div class="card cstat"><div class="help">订阅</div><b>${sub?esc(sub.planName):'<span class="c-warn">没有有效订阅</span>'}</b><div class="help">${sub?`到期 ${new Date(sub.expiresAt*1000).toLocaleDateString()} · 最多 ${sub.limits.envs} 个环境 · ${sub.limits.devices} 台设备`:"续费后才能继续同步"}</div>
+      <div class="row" style="margin-top:6px"><button class="btn sm" onclick="openRedeem()">输入兑换码</button></div></div>
+    <div class="card cstat"><div class="help">云端空间</div><b>${fmtBytes(st.used)} <small class="help">/ ${fmtBytes(st.quota)}</small></b>${barHTML(st.used/(st.quota||1))}</div>
+  </div>
+  <div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>云端环境</th><th>出口</th><th>大小</th><th>版本</th><th>最后同步</th><th>本机</th><th style="text-align:right">操作</th></tr></thead><tbody>${
+    r.envs.map(c=>{const m=c.meta||{},l=c.local;return`<tr><td><div class="nm">${esc(c.name)}<span class="kind ${m.kind==="browser"?"":"dev"}">${m.kind==="browser"?"浏览器":"开发"}</span></div><div class="note">${esc(m.note||"")}</div></td>
+      <td><div class="exitip">${flag(m.country)} ${esc(m.exitIP||"—")}</div><div class="sub2">${esc(m.location||"")}</div></td>
+      <td class="mono" style="font-size:12px">${fmtBytes(c.size)}</td><td class="mono">v${c.version}</td><td class="time">${ago(c.updatedAt)}<div class="sub2">${esc(m.device||"")}</div></td>
+      <td>${l?`<span class="st running"><i></i>${esc(l.name)}${l.version<c.version?" · 有更新":""}</span>`:'<span class="st stopped"><i></i>不在本机</span>'}</td>
+      <td><div class="ops">${l&&l.version>=c.version?"":`<button class="btn sm pri" onclick="cloudRestore('${esc(c.name)}')">${l?"恢复为新环境":"恢复到本机"}</button>`}
+        <button class="btn sm danger" onclick="cloudDel('${esc(c.name)}')">删除</button></div></td></tr>`}).join("")||'<tr><td colspan="7"><div class="empty" style="padding:24px">云端还没有环境：在环境列表里点 ☁ 同步</div></td></tr>'}</tbody></table></div>
+  <div id="planBox"></div>
+  ${notSynced.length?`<div class="card" style="margin-top:12px"><div class="row"><b>本机还有 ${notSynced.length} 个环境没同步</b><span class="help">${notSynced.map(e=>esc(e.name)).join("、")}</span><span class="spacer"></span>
+    <button class="btn sm pri" onclick="pushAll()">全部同步到云端</button></div></div>`:""}`;loadPlans()}
+async function loadPlans(){const r=await api("/api/cloud/plans");const box=$("planBox");if(!box||!r.ok||!r.plans.length)return;
+  const cur=(ACCT.user||{}).subscription;
+  box.innerHTML=`<h3 style="margin:18px 0 12px;font-size:14px">订阅套餐</h3><div class="cgrid">${r.plans.map(p=>`<div class="card plan${cur&&cur.plan===p.id?" cur":""}">
+    <div class="row"><b>${esc(p.name)}</b><span class="spacer"></span>${cur&&cur.plan===p.id?'<span class="st running"><i></i>当前</span>':""}</div>
+    <div class="price">¥${p.price}<small> / ${p.days>=365?"年":p.days>=28?"月":p.days+" 天"}</small></div>
+    <div class="help">最多 ${p.envs} 个环境 · 云端空间 ${p.quotaMB>=1024?(p.quotaMB/1024)+" GB":p.quotaMB+" MB"} · ${p.devices} 台设备</div>
+    <button class="btn sm${cur&&cur.plan===p.id?"":" pri"}" style="margin-top:12px" onclick="openRedeem('购买「${esc(p.name)}」后会拿到兑换码，在这里输入即可开通（在线支付即将开通）。')">${cur&&cur.plan===p.id?"续费":"开通"}</button></div>`).join("")}</div>`}
+async function pushAll(){for(const e of ENVS.filter(e=>!(e.cloud&&e.cloud.version)))await api(`/api/envs/${e.name}/cloud-push`,{});toast("已加入任务：同步到云端");pollFast();go("jobs")}
+async function cloudRestore(name){toast("正在从云端下载 "+name+"…");const r=await api(`/api/cloud/envs/${name}/fetch`,{});
+  if(!r.ok){toast(r.message);return}
+  iTmp=null;$("iPick").style.display="none";$("iForm").style.display="";$("iTitle").textContent="从云端恢复 · "+name;openModal("mImport");showImportForm(r)}
+async function cloudDel(name){if(!confirm(`从云端删除 ${name}？本机的环境不受影响。`))return;const r=await api(`/api/cloud/envs/${name}/delete`,{});toast(r.ok?"已从云端删除":r.message);loadCloud()}
+
+/* ---------- 代理库 ---------- */
+async function loadProxies(quiet){const r=await api("/api/proxies");PX=r.proxies;$("cPx").textContent=PX.length;if(!quiet||$("p-proxies").classList.contains("on"))renderProxies();return PX}
+function renderProxies(){
+  const q=$("pq").value.trim().toLowerCase();
+  const list=PX.filter(p=>!q||[p.name,p.host,p.group,(p.check||{}).ip,(p.check||{}).countryName,(p.check||{}).city].join(" ").toLowerCase().includes(q));
+  $("pxEmpty").style.display=PX.length?"none":"block";
+  $("pxRows").innerHTML=list.map(p=>{const c=p.check||{};return `<tr data-id="${p.id}" class="${psel.has(p.id)?"sel":""}">
+    <td><input type="checkbox" class="cb pcb" ${psel.has(p.id)?"checked":""}></td>
+    <td><div class="nm">${esc(p.name)||'<span class="c-mute">未命名</span>'}</div>${p.group?`<span class="tag">${esc(p.group)}</span>`:""}</td>
+    <td class="mono" style="font-size:12px">${esc(p.type.toUpperCase())}</td>
+    <td><div class="exitip">${esc(p.host)}:${p.port}</div><div class="sub2">${p.user?esc(p.user)+(p.hasPass?" · ••••":""):"无认证"}</div></td>
+    <td>${c.at?(c.ok?`<div class="exitip">${flag(c.country)} ${esc(c.ip)}</div><div class="sub2">${esc([c.city,c.countryName].filter(Boolean).join(", "))}</div>`:`<span class="st bad"><i></i>不可用</span><div class="sub2" title="${esc(c.error)}">${esc(c.error)}</div>`):'<span class="c-mute">未检测</span>'}</td>
+    <td class="mono" style="font-size:12px">${c.ok?`<span class="${c.latency<300?"c-ok":c.latency<800?"c-warn":"c-bad"}">${c.latency} ms</span>`:"—"}</td>
+    <td style="font-size:12px">${c.ok?(c.hosting?'<span class="c-warn">机房</span>':'<span class="c-ok">住宅</span>'):"—"}</td>
+    <td style="font-size:12px">${p.usedBy.length?p.usedBy.map(esc).join("、"):'<span class="c-mute">—</span>'}</td>
+    <td><div class="ops"><button class="btn sm" data-pa="check">检测</button><button class="btn sm" data-pa="clash" title="生成 Clash 订阅，手机用同一个出口">订阅</button><button class="ib" data-pa="del" title="删除">✕</button></div></td></tr>`}).join("");
+  $("pCheckSel").disabled=$("pDel").disabled=!psel.size;
+}
+$("pq").oninput=renderProxies;
+$("pxRows").addEventListener("click",async e=>{const tr=e.target.closest("tr");if(!tr)return;const id=tr.dataset.id;
+  if(e.target.classList.contains("pcb")){e.target.checked?psel.add(id):psel.delete(id);renderProxies();return}
+  const b=e.target.closest("[data-pa]");if(!b)return;
+  if(b.dataset.pa==="clash"){openClash("proxy",id);return}
+  if(b.dataset.pa==="check"){b.innerHTML='<span class="spin"></span>';await api("/api/proxies/check",{ids:[id]});loadProxies()}
+  else if(b.dataset.pa==="del"){const p=PX.find(x=>x.id===id);if(p.usedBy.length&&!confirm(`${p.usedBy.join("、")} 正在用这个代理（环境里的设置不受影响）。仍然删除？`))return;await api("/api/proxies/delete",{ids:[id]});psel.delete(id);loadProxies()}});
+$("pall").onchange=e=>{psel=new Set(e.target.checked?PX.map(p=>p.id):[]);renderProxies()};
+async function checkProxies(onlySel){toast("检测中…");await api("/api/proxies/check",{ids:onlySel?[...psel]:[]});await loadProxies();toast("检测完成")}
+async function delProxies(){if(!confirm(`删除选中的 ${psel.size} 个代理？`))return;await api("/api/proxies/delete",{ids:[...psel]});psel.clear();loadProxies()}
+async function addProxies(){
+  const r=await api("/api/proxies",{text:$("aText").value,name:$("aName").value.trim(),group:$("aGroup").value.trim()});toast(r.message);
+  if(r.ok){closeAll();$("aText").value="";$("aName").value="";await loadProxies();if($("aCheck").checked){await api("/api/proxies/check",{ids:PX.slice(-r.added).map(p=>p.id)});loadProxies()}}
+}
+function openModal(id){$("mask").classList.add("on");$(id).classList.add("on")}
+
+/* ---------- 任务 ---------- */
+async function loadJobs(){
+  const r=await api("/api/jobs");JOBS=r.jobs;const act=JOBS.filter(j=>j.state==="running"||j.state==="queued").length;
+  $("cJob").textContent=act||JOBS.length;$("cJob").classList.toggle("hot",!!act);
+  $("jobRows").innerHTML=JOBS.length?JOBS.map(j=>`<div class="jrow" data-id="${j.id}">
+    <span>${j.state==="running"?'<span class="spin"></span>':j.state==="queued"?'<span class="c-mute">◷</span>':j.state==="done"?'<span class="c-ok">✓</span>':'<span class="c-bad">✗</span>'}</span>
+    <b>${esc(j.title)}</b><span class="sub2" style="max-width:none">${esc(j.last)}</span>
+    <span class="time">${new Date(j.createdAt*1000).toLocaleTimeString()}</span>
+    <span class="time">${j.endedAt?Math.round(j.endedAt-j.createdAt)+" 秒":j.state==="queued"?"排队中":"进行中"}</span></div>`).join(""):'<div class="empty">还没有任务</div>';
+  return act;
+}
+$("jobRows").onclick=e=>{const r=e.target.closest(".jrow");if(r)showLog(r.dataset.id)};
+async function showLog(id){logJob=id;openModal("mLog");const f=async()=>{const j=await api("/api/jobs/"+id);if(!j||j.error)return;
+  $("logTitle").textContent=j.title;$("logState").innerHTML=j.state==="running"?'<span class="spin"></span>':j.state==="done"?'<span class="c-ok">完成</span>':j.state==="failed"?'<span class="c-bad">失败</span>':'<span class="c-mute">排队中</span>';
+  const el=$("logBody"),atEnd=el.scrollTop+el.clientHeight>=el.scrollHeight-20;el.textContent=j.lines.join("\n")||"等待输出…";if(atEnd)el.scrollTop=el.scrollHeight;
+  if(j.state==="done"||j.state==="failed"){clearInterval(logTimer);logTimer=null}};
+  await f();clearInterval(logTimer);logTimer=setInterval(f,1000)}
+
+/* ---------- 设置 ---------- */
+async function loadSystem(){
+  SYS=await api("/api/system");
+  $("sRt").value=SYS.runtimeSetting;$("sRtNow").textContent=SYS.runtime||"未找到";$("sRtState").innerHTML=SYS.runtimeError?`<span class="c-bad">${esc(SYS.runtimeError)}</span>`:'<span class="c-ok">正常</span>';
+  document.querySelectorAll("#sArch button").forEach(b=>b.classList.toggle("on",b.dataset.v===SYS.arch));
+  $("sImg").innerHTML=SYS.image?'<span class="c-ok">已构建 easycc:latest</span>':'<span class="c-warn">还没有构建</span>';
+  $("sData").textContent=SYS.dataDir;$("sHost").textContent=SYS.host;$("sImgUrl").value=SYS.imageURL||"";$("sImgSha").value=SYS.imageSHA256||"";$("sElastic").checked=SYS.elastic!==false;$("sSleep").value=String(SYS.autoSleep??30);$("sTele").checked=SYS.telemetry!==false;
+  $("bmLink").href="javascript:location.href='"+location.origin+"/open?url='+encodeURIComponent(location.href)";
+  return SYS;
+}
+$("sElastic").onchange=async()=>{await api("/api/settings",{elastic:$("sElastic").checked});toast("已保存")};
+$("sTele").onchange=async()=>{await api("/api/settings",{telemetry:$("sTele").checked});toast("已保存")};
+$("sSleep").onchange=async()=>{await api("/api/settings",{autoSleep:+$("sSleep").value});toast("已保存")};
+$("sRt").onchange=async()=>{await api("/api/settings",{runtime:$("sRt").value});toast("已保存");loadSystem();loadEnvs()};
+document.querySelectorAll("#sArch button").forEach(b=>b.onclick=async()=>{await api("/api/settings",{arch:b.dataset.v});toast("已保存，重新构建镜像后生效");loadSystem()});
+async function saveImgSrc(){const r=await api("/api/settings",{imageURL:$("sImgUrl").value.trim(),imageSHA256:$("sImgSha").value.trim()});toast(r.message||"已保存");loadSystem()}
+async function pullImage(){const r=await api("/api/image/pull",{});if(!r.ok){toast(r.message);go("settings");return}toast("开始下载环境镜像");showLog(r.job);pollFast()}
+async function buildImage(){if(!confirm("开始构建环境镜像？首次约 5–15 分钟，可以在「任务」里看进度。"))return;const r=await api("/api/build",{});toast("已开始构建");showLog(r.job);pollFast()}
+
+/* ---------- 存储 ---------- */
+const ST_COLORS={sys:"var(--cyan)",home:"var(--green)",img:"var(--violet)",cache:"var(--amber)",vm:"var(--blue)",other:"var(--dim)"};
+async function loadStorage(refresh){
+  const d=await api("/api/storage",refresh?{refresh:1}:{});if(!d||!d.items)return;
+  const home=(SYS&&SYS.dataDir||"").replace(/\/\.easycc$/,""),short=p=>home&&p.startsWith(home+"/")?"~"+p.slice(home.length):p;
+  $("stLoc").innerHTML=d.items.map(i=>`<div>${esc(i.label)}</div><div><span class="mono" title="${esc(i.real)}">${i.default?"默认位置（本机）":esc(short(i.real))}</span>`+
+    `<span class="help" style="display:block">${i.ok?"占用 "+gb(i.bytes)+" · 所在磁盘剩余 "+gb(i.free):'<span class="c-bad">不可用（外置盘没接上？）</span>'}</span></div>`).join("");
+  $("stBar").innerHTML=d.parts.filter(p=>p.bytes>0).map(p=>`<i style="flex:${p.bytes};background:${ST_COLORS[p.key]}" title="${p.label} ${gb(p.bytes)}"></i>`).join("");
+  $("stLeg").innerHTML=d.parts.filter(p=>p.bytes>0||!["other","vm"].includes(p.key)).map(p=>`<span title="${esc(p.label)}"><em style="background:${ST_COLORS[p.key]}"></em><i>${p.label}${p.key==="sys"&&d.envs?" · "+d.envs+" 个":""}</i><b>${gb(p.bytes)}</b></span>`).join("");
+  $("stBack").style.display=d.default?"none":"";
+  ["stMove","stBack","stClean"].forEach(id=>$(id).disabled=d.busy||!d.movable&&id!=="stClean");
+  if(!d.movable)$("stHelp").textContent="Windows 版暂不支持更改存储位置。";
+  const c=d.parts.find(p=>p.key==="cache");$("stClean").textContent=c&&c.bytes>(1<<30)?"清理缓存（"+gb(c.bytes)+"）":"清理缓存";
+}
+async function moveStorage(back){
+  let target="";
+  if(!back){const r=await api("/api/pick-folder",{title:"选择 easyCC 数据的新位置"});if(!r.ok){if(r.message&&r.message!=="已取消")toast(r.message);return}target=r.path}
+  const c=await api("/api/storage/check",{target});
+  if(!c.ok){toast(c.message);return}
+  const run=c.running&&c.running.length?"\n\n会先停止运行中的环境（"+c.running.join("、")+"），搬完自动重新启动。":"";
+  if(!confirm((back?"把 easyCC 的数据搬回默认位置？":"把 easyCC 的数据搬到\n"+c.target+"？")+"\n\n"+c.message+run+"\n\n搬的过程中不要关闭 easyCC、不要拔外置盘。"))return;
+  const r=await api("/api/storage/move",{target});if(!r.ok){toast(r.message);return}
+  toast("开始搬数据，可以在「任务」里看进度");showLog(r.job);pollFast();watchStorageJob(r.job)}
+async function cleanStorage(){
+  if(!confirm("清理构建缓存和旧版本的镜像？\n\n环境、环境里的文件和正在用的镜像都不动；下次在本机构建镜像会慢一些。"))return;
+  const r=await api("/api/storage/clean",{});toast("开始清理");showLog(r.job);pollFast();watchStorageJob(r.job)}
+function watchStorageJob(id){const t=setInterval(async()=>{const js=await api("/api/jobs").catch(()=>null);const j=js&&js.jobs&&js.jobs.find(x=>x.id===id);
+  if(!j||j.state==="done"||j.state==="failed"){clearInterval(t);loadStorage(true);loadSystem();loadEnvs()}},3000);loadStorage()}
+/* ---------- 手机订阅（Clash） ---------- */
+let CB={};
+function qrSvg(text){try{const q=qrcode(0,"M");q.addData(unescape(encodeURIComponent(text)));q.make();return q.createSvgTag({cellSize:4,margin:0,scalable:true})}catch(e){return""}}
+async function openClash(kind,id,ip,reset){
+  const r=await api("/api/clash",{[kind]:id,ip:ip||"",reset:!!reset});if(!r.ok){toast(r.message);return}
+  CB={kind,id,ip:r.ip,url:r.url};
+  $("cbTitle").textContent="手机订阅 · "+r.title;$("cbWho").textContent=kind==="env"?"环境 "+r.title:"代理 "+r.title;
+  $("cbQr").innerHTML=r.url?qrSvg(r.url):'<div class="c-mute" style="color:#666;font-size:12px;padding:20px;text-align:center">没有局域网地址，<br>请保存为文件</div>';
+  $("cbUrl").value=r.url||"（没找到局域网地址）";
+  $("cbIpF").style.display=r.ips.length>1?"":"none";$("cbIp").innerHTML=r.ips.map(i=>`<option value="${i.ip}" ${i.ip===r.ip?"selected":""}>${i.ip}（${esc(i.iface)}）</option>`).join("");
+  $("cbWarn").innerHTML=r.warn.map(w=>`<div class="card" style="margin-top:var(--sp-2);border-color:rgba(251,191,36,.35);font-size:12.5px;color:var(--amber)">⚠ ${esc(w)}</div>`).join("");
+  $("cbYaml").textContent=r.yaml;openModal("mClash");if(reset)toast("已换成新链接，旧链接失效")}
+function clashCopy(){if(!CB.url)return;const t=$("cbUrl");t.select();try{navigator.clipboard.writeText(CB.url).catch(()=>document.execCommand("copy"))}catch(e){document.execCommand("copy")}toast("已复制订阅链接")}
+async function clashSave(){const r=await api("/api/clash/save",{[CB.kind]:CB.id,ip:CB.ip});toast(r.message)}
+function clashReset(){if(confirm("换一个新链接？手机上导入过的旧链接会立即失效，需要重新扫码。"))openClash(CB.kind,CB.id,CB.ip,true)}
+/* ---------- 机器身份 ---------- */
+let EDITING=null;
+async function resetPersona(){if(!EDITING)return;
+  if(!confirm("给 "+EDITING+" 换一组新的机器身份？\n\n网卡 MAC、主机名、machine-id、字体组合、分辨率、核数都会变，网站会把它当成一台新电脑，已登录的网站可能要求重新验证。重启环境后生效。"))return;
+  const r=await api(`/api/envs/${EDITING}/persona-reset`,{});toast(r.message);closeAll();loadEnvs()}
+/* ---------- 轮询 ---------- */
+let fastUntil=0;function pollFast(){fastUntil=Date.now()+60000}
+async function tick(){
+  try{const envs=await loadEnvs();const act=await loadJobs();if(act||envs.some(e=>e.status==="busy"))pollFast();}catch(e){}
+  setTimeout(tick,Date.now()<fastUntil?1500:6000);
+}
+(async()=>{await loadSystem().catch(()=>{});await loadProxies(true).catch(()=>{});
+  if(location.pathname==="/open"){const u=new URLSearchParams(location.search).get("url")||"";history.replaceState(null,"","/");
+    go("envs");await loadEnvs();tick();openUrlModal(u);return}
+  let p="envs";try{p=location.hash.slice(1)||localStorage.getItem("cbox-mgr-page")||"envs"}catch(e){}
+  if(p.startsWith("ports-")){go("envs");tick();await loadEnvs();openPorts(p.slice(6));return}
+  if(p.startsWith("new")){go("envs");tick();openEditor().then(()=>{if(p.includes("-"))dtab(p.split("-")[1])});return}
+  go(["envs","proxies","jobs","settings"].includes(p)?p:"envs");tick()})();
+</script>
+</body>
+</html>

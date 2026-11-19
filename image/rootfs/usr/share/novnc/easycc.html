@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>浏览器</title>
+<style>
+html,body{margin:0;height:100%;background:#141416;overflow:hidden}
+#screen{width:100%;height:100%}
+#msg{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
+  color:#8e8e93;font:14px -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",sans-serif;pointer-events:none}
+#msg i{width:18px;height:18px;border:2px solid rgba(255,255,255,.216);border-top-color:#f2f3f5;border-radius:50%;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<div id="msg"><i></i><span id="msgT">正在打开浏览器…</span></div>
+<script type="module">
+// easyCC 环境浏览器：只显示环境里的 Firefox，不要 noVNC 的工具条。
+// 网址参数：password（VNC 密码）、name（环境名，窗口标题显示「环境名 浏览器」）
+import RFB from './core/rfb.js';
+
+const q = new URLSearchParams(location.search);
+const name = q.get('name') || '';
+document.title = (name ? name + ' ' : '') + '浏览器';
+const url = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/websockify';
+const msg = document.getElementById('msg'), msgT = document.getElementById('msgT');
+// 在 easyCC.app 里：剪贴板交给原生外壳读写（WebKit 不让网页随便读剪贴板）
+const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cboxclip;
+let rfb = null, retry = 0;
+
+function connect() {
+  rfb = new RFB(document.getElementById('screen'), url, { credentials: { password: q.get('password') || '' } });
+  rfb.scaleViewport = true;      // 窗口多大画面就多大
+  rfb.resizeSession = true;      // 环境桌面跟着窗口改分辨率
+  rfb.focusOnClick = true;
+  rfb.addEventListener('connect', () => { retry = 0; msg.style.display = 'none'; rfb.focus(); });
+  rfb.addEventListener('disconnect', () => {
+    msg.style.display = 'flex'; msgT.textContent = '连接断开，正在重连…';
+    setTimeout(connect, Math.min(1000 * ++retry, 5000));
+  });
+  // 环境里复制的内容 → 电脑剪贴板
+  rfb.addEventListener('clipboard', e => {
+    if (native) native.postMessage(e.detail.text);
+    else if (navigator.clipboard) navigator.clipboard.writeText(e.detail.text).catch(() => {});
+  });
+}
+connect();
+
+// 电脑剪贴板 → 环境，再按 Ctrl+V（原生外壳在 ⌘V 时调用）
+window.easyccPaste = text => {
+  if (!rfb) return;
+  if (text) rfb.clipboardPasteFrom(text);
+  setTimeout(() => sendCtrl('v'), 30);
+};
+
+// Mac 的 ⌘ 当 Ctrl 用：⌘C / ⌘X / ⌘A / ⌘T / ⌘W / ⌘L / ⌘R / ⌘F / ⌘Z …（环境里是 Linux 的 Firefox）
+const XK_Control_L = 0xffe3;
+function sendCtrl(k) {
+  rfb.sendKey(XK_Control_L, 'ControlLeft', true);
+  rfb.sendKey(k.charCodeAt(0), null);
+  rfb.sendKey(XK_Control_L, 'ControlLeft', false);
+}
+function onKey(e) {
+  if (!rfb) return;
+  if (e.key === 'Meta') { e.stopPropagation(); return; }          // ⌘ 自己不发给环境（不然是 Super 键）
+  if (!e.metaKey) return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : null;
+  if (!k) return;
+  e.stopPropagation();
+  if (e.type !== 'keydown') { e.preventDefault(); return; }
+  if (k === 'v') {
+    if (native) return;                                           // 交给原生外壳的「粘贴」（它会调 easyccPaste）
+    e.preventDefault();
+    (navigator.clipboard ? navigator.clipboard.readText() : Promise.resolve('')).then(t => window.easyccPaste(t), () => sendCtrl('v'));
+    return;
+  }
+  if (k === 'q' || k === 'h' || k === 'm') return;                // 退出 / 隐藏 / 最小化留给电脑
+  e.preventDefault();
+  sendCtrl(k);
+}
+document.addEventListener('keydown', onKey, true);
+document.addEventListener('keyup', onKey, true);
+</script>
+</body>
+</html>

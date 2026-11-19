@@ -1,0 +1,29 @@
+#!/bin/bash
+# 环境浏览器（Firefox 或 Chrome，按环境设置；走环境的代理出口，时区 / 语言与出口一致）
+#   cbox-browser [网址...]   已开着就在新标签页打开，没开就启动；立即返回
+# 也是 ${BROWSER}：claude 登录等程序要打开的链接都会进这里
+export DISPLAY="${DISPLAY:-:1}"
+[ -f /etc/profile.d/cbox-env.sh ] && . /etc/profile.d/cbox-env.sh
+if [ "$(id -un)" = root ]; then exec runuser -u dev -- "$0" "$@"; fi
+. /usr/local/lib/cbox/browser.sh
+if [ ! -S /tmp/.X11-unix/X${DISPLAY#:} ]; then echo "环境桌面还没启动" >&2; exit 1; fi
+for u in "$@"; do
+  case "$u" in http://*|https://*|file://*|about:*|chrome://*|-*) ;; *) echo "只能打开 http / https 链接：$u" >&2; exit 2 ;; esac
+done
+E="$(cbox_engine)"
+if pgrep -u "$(id -u)" -f "$(cbox_browser_pat "$E")" >/dev/null; then
+  # 已开着：交给正在运行的实例开新标签页，并把窗口提到前面
+  if [ "$E" = chrome ]; then
+    [ $# -gt 0 ] && { cbox_chrome "$@" >/dev/null 2>&1; exit 0; }
+    cbox_chrome --new-window >/dev/null 2>&1; exit 0
+  fi
+  [ $# -gt 0 ] && exec firefox --new-tab "$@" >/dev/null 2>&1
+  exec firefox --new-window about:home >/dev/null 2>&1
+fi
+cbox_clear_locks
+if [ "$E" = chrome ]; then
+  (setsid bash -c '. /usr/local/lib/cbox/browser.sh; cbox_chrome "$@"' _ "$@" </dev/null >/dev/null 2>&1 &)
+else
+  setsid firefox "$@" </dev/null >/dev/null 2>&1 &
+fi
+exit 0

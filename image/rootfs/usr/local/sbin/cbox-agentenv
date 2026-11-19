@@ -1,0 +1,87 @@
+#!/bin/bash
+# 让 agent 知道自己在什么环境里（root 运行）
+#   cbox-agentenv refresh   把 agent 能看的环境信息写到 /run/cbox/agent-env.env（不含密码；easycc-env 读它）
+#   cbox-agentenv install   把环境说明装进各 agent 的全局说明文件，并装上 easycc-host 技能
+# 说明原文：/usr/local/share/easycc/agent-guide.md
+#   Claude Code：/etc/claude-code/CLAUDE.md（系统级，所有会话都加载，用户改不到）
+#   Codex / Gemini / Qwen / opencode：各自全局说明文件里一段带标记的内容（只替换这一段，用户自己写的保留）
+set -uo pipefail
+RUN=/run/cbox
+CONF=/etc/cbox/config.env
+SHARE=/usr/local/share/easycc
+H=/home/dev
+G="$(id -g dev 2>/dev/null || echo 0)"   # dev 的组号跟电脑上的用户一致，不一定叫 dev
+
+refresh() {
+  local tmp="$RUN/agent-env.env.tmp"
+  python3 - "$CONF" "$RUN/init.env" /etc/cbox/host.json > "$tmp" <<'PY'
+import json, re, shlex, sys
+def env(path):
+    d = {}
+    try:
+        for line in open(path, encoding="utf-8"):
+            m = re.match(r"^([A-Z_]+)=(.*)$", line.strip())
+            if m:
+                v = m.group(2).strip()
+                d[m.group(1)] = v[1:-1] if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"" else v
+    except OSError:
+        pass
+    return d
+conf, init = env(sys.argv[1]), env(sys.argv[2])     # init.env：容器启动参数里的 INSTANCE、HOST_ROOT（cbox-init 写）
+root = init.get("HOST_ROOT", "")
+try:
+    host = json.load(open(sys.argv[3]))
+except (OSError, ValueError):
+    host = {}
+out = {"INSTANCE": init.get("INSTANCE", "") or conf.get("INSTANCE", ""), "HOST_ROOT": root, "HOST_OS": host.get("os", ""), "HOST_USER": host.get("user", ""),
+       "HOST_ACCESS": conf.get("HOST_ACCESS", "0"), "HOST_SSH": conf.get("HOST_SSH", "0"),
+       "FORWARD_PORTS": conf.get("FORWARD_PORTS", ""), "FORWARD_LOCALHOST": conf.get("FORWARD_LOCALHOST", "0")}
+for k, v in out.items():
+    print("%s=%s" % (k, shlex.quote(re.sub(r"[\r\n]", " ", v))))
+PY
+  chmod 644 "$tmp" && mv -f "$tmp" "$RUN/agent-env.env"
+}
+
+# 把说明作为带标记的一段写进文件：已有这一段就替换，没有就追加；文件和目录属于 dev
+put_block() {
+  local f="$1"
+  install -d -o dev -g "$G" "$(dirname "$f")"
+  python3 - "$f" "$SHARE/agent-guide.md" <<'PY'
+import os, sys
+path, guide = sys.argv[1], open(sys.argv[2], encoding="utf-8").read().strip()
+b, e = "<!-- easyCC 环境说明 开始（easyCC 每次启动自动更新，不要改这一段） -->", "<!-- easyCC 环境说明 结束 -->"
+try:
+    old = open(path, encoding="utf-8").read()
+except OSError:
+    old = ""
+block = "%s\n%s\n%s" % (b, guide, e)
+if b in old and e in old:
+    new = old[:old.index(b)] + block + old[old.index(e) + len(e):]
+else:
+    new = (old.rstrip() + "\n\n" if old.strip() else "") + block + "\n"
+if new != old:
+    open(path + ".tmp", "w", encoding="utf-8").write(new)
+    os.replace(path + ".tmp", path)
+PY
+  chown "dev:$G" "$f"
+}
+
+install_guides() {
+  install -d -m 755 /etc/claude-code
+  install -m 644 "$SHARE/agent-guide.md" /etc/claude-code/CLAUDE.md
+  # 技能：整个目录是 easyCC 的，直接覆盖
+  install -d -o dev -g "$G" "$H/.claude" "$H/.claude/skills"
+  rm -rf "$H/.claude/skills/easycc-host"
+  cp -r "$SHARE/skills/easycc-host" "$H/.claude/skills/"
+  chown -R "dev:$G" "$H/.claude/skills/easycc-host"
+  local f
+  for f in "$H/.codex/AGENTS.md" "$H/.gemini/GEMINI.md" "$H/.qwen/QWEN.md" "$H/.config/opencode/AGENTS.md"; do
+    put_block "$f"
+  done
+}
+
+case "${1:-}" in
+  refresh) refresh ;;
+  install) install_guides; refresh ;;
+  *) echo "用法: cbox-agentenv refresh | install" >&2; exit 2 ;;
+esac

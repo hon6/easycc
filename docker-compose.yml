@@ -1,0 +1,35 @@
+# 直接用 Docker Compose 跑一个实例（不想用 easycc 命令时）：
+#   cp .env.example .env && 编辑 .env && docker compose up -d --build
+#   管理后台：http://127.0.0.1:7681/login?k=<ADMIN_TOKEN>
+# 多个出口 IP：复制一份目录，改 .env 里的 COMPOSE_PROJECT_NAME、端口和代理即可。
+services:
+  easycc:
+    build:
+      context: ./image
+      args:
+        HOST_UID: "${HOST_UID:-1000}"
+        HOST_GID: "${HOST_GID:-1000}"
+    image: easycc:latest
+    # amd64 才带 Kiteline；Apple 芯片 / ARM 服务器想要原生速度可改成 linux/arm64（没有 Kiteline）
+    platform: linux/amd64
+    hostname: ubuntu-${INSTANCE:-box}
+    cap_add: [NET_ADMIN, NET_RAW]
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    shm_size: 1g
+    env_file: .env
+    environment:
+      INSTANCE: ${INSTANCE:-box}
+      HOST_ROOT: ${PROJECTS_ROOT:-./projects}
+      HOST_VNC_PORT: ${VNC_PORT:-6080}
+      HOST_SSH_PORT: ${SSH_PORT:-2222}
+      CBOX_RUNTIME: docker
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-7681}:7681"   # 管理后台
+      - "127.0.0.1:${VNC_PORT:-6080}:6080"     # 浏览器桌面（noVNC）
+      - "127.0.0.1:${SSH_PORT:-2222}:22"       # SSH / Remote-SSH
+    volumes:
+      - ${PROJECTS_ROOT:-./projects}:/projects   # 项目根目录；当前项目在管理后台里选（/workspace 指向它）
+      - ./data/home:/home/dev        # 浏览器登录、Claude 登录、Kiteline 配对
+      - ./data/conf:/etc/cbox        # SSH 主机密钥（重建容器指纹不变）
+    restart: unless-stopped

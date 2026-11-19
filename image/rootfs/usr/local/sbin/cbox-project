@@ -1,0 +1,28 @@
+#!/bin/bash
+# 当前项目：/workspace → /projects/<相对路径>
+#   cbox-project set <相对路径>   切换（不存在就以 dev 身份创建），并记进配置
+#   cbox-project get             输出当前相对路径
+set -uo pipefail
+ROOT=/projects
+CONF=/etc/cbox/config.env
+case "${1:-}" in
+  get) t="$(readlink /workspace 2>/dev/null || echo "$ROOT")"; r="${t#$ROOT}"; echo "${r#/}" ;;
+  set)
+    rel="${2:-}"; rel="${rel#/}"; rel="${rel%/}"
+    case "/$rel/" in */../*|*/./*) echo "路径不合法：$rel" >&2; exit 1 ;; esac
+    mkdir -p "$ROOT"
+    target="$ROOT${rel:+/$rel}"
+    [ -d "$target" ] || runuser -u dev -- mkdir -p "$target" || { echo "无法创建 $target" >&2; exit 1; }
+    real="$(realpath "$target")"
+    case "$real" in "$ROOT"|"$ROOT"/*) ;; *) echo "目录必须在项目根目录里（符号链接指到了外面）" >&2; exit 1 ;; esac
+    [ -L /workspace ] || rmdir /workspace 2>/dev/null || rm -f /workspace 2>/dev/null
+    ln -sfn "$real" /workspace
+    # 记进配置，重建容器后保持
+    if [ -f "$CONF" ] || [ -d /etc/cbox ]; then
+      touch "$CONF"
+      grep -v '^PROJECT=' "$CONF" > "$CONF.tmp" 2>/dev/null; printf "PROJECT='%s'\n" "${rel//\'/}" >> "$CONF.tmp"
+      cat "$CONF.tmp" > "$CONF"; rm -f "$CONF.tmp"
+    fi
+    echo "$real" ;;
+  *) echo "用法: cbox-project get | set <相对路径>" >&2; exit 2 ;;
+esac

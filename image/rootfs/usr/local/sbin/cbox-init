@@ -1,0 +1,123 @@
+#!/bin/bash
+# easycc 容器入口（root 运行）
+# 顺序：读配置 → 网络（cbox-net：防火墙失败即退出）→ 项目目录 → SSH → 桌面与浏览器 → 管理后台 → 守护
+set -uo pipefail
+
+CONF=/etc/cbox/config.env
+RUN=/run/cbox
+LOG() { echo "[cbox $(date '+%H:%M:%S')] $*"; }
+DIE() { echo "[cbox] 致命错误：$*" >&2; echo "FAILED: $*" > "$RUN/state"; sleep 3; exit 1; }
+
+# 这个环境的机器身份（machine-id、主机名、字体组合、渲染方式，每个环境不同）：最先做。
+# Apple container 不能从外面指定主机名，easycc 给了 SYS_ADMIN 能力只为在这里改主机名，改完就从能力集里去掉，后面启动的所有程序都没有它
+if [ -z "${CBOX_CAPS_DROPPED:-}" ]; then
+  /usr/local/sbin/cbox-persona 2>&1 | sed 's/^/[cbox-persona] /'
+  if capsh --print 2>/dev/null | grep -qi '^Bounding set.*cap_sys_admin'; then
+    exec env CBOX_CAPS_DROPPED=1 capsh --drop=cap_sys_admin -- "$0" "$@"
+  fi
+fi
+
+mkdir -p "$RUN"; chmod 755 "$RUN"
+echo starting > "$RUN/state"
+# 给 agent 看的启动参数（不含密码）：实例名、项目根目录在电脑上的路径
+printf "INSTANCE='%s'\nHOST_ROOT='%s'\n" "${INSTANCE:-}" "${HOST_ROOT:-}" > "$RUN/init.env"; chmod 644 "$RUN/init.env"
+# 配置来源：挂载的 /etc/cbox/config.env（easycc 用），或直接用环境变量（docker run -e / compose）
+if [ -f "$CONF" ]; then set -a; . "$CONF"; set +a; fi
+[ -n "${PROXY_URL:-}" ] || DIE "没有设置 PROXY_URL（环境变量或 /etc/cbox/config.env），例如 socks5://用户名:密码@1.2.3.4:1080"
+# 没配的密码 / 令牌临时生成，导出给 cbox-userland 和管理后台（打印在启动日志里）
+gen() { head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+export VNC_PASSWORD="${VNC_PASSWORD:-$(gen 8)}"
+export ADMIN_TOKEN="${ADMIN_TOKEN:-$(gen 24)}"
+SCREEN="${SCREEN:-1600x1000}"
+AUTOSTART_BROWSER="${AUTOSTART_BROWSER:-1}"
+CHECK_INTERVAL="${CHECK_INTERVAL:-300}"
+
+# Apple container：经 vsock 发布的 unix 套接字 → 本机端口（宿主机端口转发不受「本地网络」权限影响）
+setsid /usr/local/sbin/cbox-sockbridge >"$RUN/sockbridge.log" 2>&1 &
+
+# ---------- 1–5. 网络：防火墙（失败就不启动，绝不裸连）→ mihomo → 按出口 IP 设时区 / 语言 → 联网检查 ----------
+# 检查没通过（代理不通、出口在大陆、地区变了……）不退出：外网闸门关着，终端、文件照常能用，后台自动重试
+out="$(/usr/local/sbin/cbox-net apply 2>&1)"; rc=$?
+echo "$out" | grep -v '^OK \|^BLOCKED\|^PAUSED' | sed 's/^/  /'
+case $rc in
+  0) ;;
+  3) LOG "联网检查没通过，外网先关着，稍后自动重试（详情：管理后台「网络」）" ;;
+  *) DIE "$(echo "$out" | tail -1)" ;;
+esac
+. /etc/profile.d/cbox-env.sh
+
+# ---------- 6. 项目目录：/projects 挂的是项目根目录，/workspace 指向当前项目（管理后台可切换）----------
+/usr/local/sbin/cbox-project set "${PROJECT:-}" >/dev/null || LOG "项目目录 ${PROJECT:-} 设置失败，/workspace 指向 /projects"
+
+# ---------- 6b. SSH（供 VS Code / Cursor Remote-SSH）----------
+# 主机密钥存进实例配置目录，容器重建后指纹不变
+for t in ed25519 rsa; do
+  k=/etc/ssh/ssh_host_${t}_key
+  if [ -f /etc/cbox/ssh_host_${t}_key ]; then cp /etc/cbox/ssh_host_${t}_key "$k"
+  else ssh-keygen -q -t $t -N '' -f "$k" && cp "$k" /etc/cbox/ 2>/dev/null || true; fi
+  chmod 600 "$k"; ssh-keygen -y -f "$k" > "$k.pub"
+done
+install -d -m 755 /etc/ssh/authorized_keys /run/sshd
+# 公钥来源：挂载的 /etc/cbox/authorized_keys，或环境变量 SSH_AUTHORIZED_KEYS（多把用换行分隔）
+{ cat /etc/cbox/authorized_keys 2>/dev/null; printf '%s\n' "${SSH_AUTHORIZED_KEYS:-}"; } | grep -E '^(ssh-|ecdsa-|sk-)' > /etc/ssh/authorized_keys/dev || true
+chmod 644 /etc/ssh/authorized_keys/dev
+[ -s /etc/ssh/authorized_keys/dev ] || LOG "没有配置 SSH 公钥，SSH 登录不可用（设置 SSH_AUTHORIZED_KEYS 或挂载 /etc/cbox/authorized_keys）"
+cat > /etc/ssh/sshd_config.d/cbox.conf <<'SSHCONF'
+Port 22
+AuthorizedKeysFile /etc/ssh/authorized_keys/%u .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers dev
+AllowTcpForwarding local
+GatewayPorts no
+X11Forwarding no
+PermitTunnel no
+AcceptEnv LANG LC_*
+SSHCONF
+/usr/sbin/sshd -t || DIE "sshd 配置检查失败"
+/usr/sbin/sshd -D -e >>"$RUN/sshd.log" 2>&1 &
+
+# ---------- 7. 用户侧：桌面、浏览器、Claude Code、Kiteline；noVNC；管理后台 ----------
+/usr/local/sbin/cbox-userland start
+/usr/local/sbin/cbox-agentenv install || LOG "环境说明没装上（不影响使用）"
+websockify --web /usr/share/novnc 6080 127.0.0.1:5901 >"$RUN/novnc.log" 2>&1 &
+python3 -I /usr/local/lib/cbox/admin.py >"$RUN/admin.log" 2>&1 &
+echo running > "$RUN/state"
+LOG "就绪：管理后台 容器 7681 端口（令牌 ${ADMIN_TOKEN}，打开 http://<主机>:<映射端口>/login?k=${ADMIN_TOKEN}）"
+LOG "      浏览器桌面 容器 6080 端口（VNC 密码 ${VNC_PASSWORD}）；SSH 容器 22 端口（用户 dev，仅公钥）"
+
+# ---------- 8. 守护：定期复查联网检查 ----------
+# 放行中：每 CHECK_INTERVAL 秒（默认 300）重做一遍检查：明确违规（出口变了、到了大陆、泄漏……）立即关闸门，
+#         只是超时拿不到证据时 30 秒后再查，连续 3 次才关；
+# 关着时：15、30、60、120、240 秒后各完整重试一次（重新应用网络），之后每 300 秒一次；手动暂停时不自动恢复。
+trap 'LOG "收到停止信号"; touch "$RUN/killswitch"; pkill -P $$; pkill -x mihomo; exit 0' TERM INT
+backoff=(15 30 60 120 240 300)
+fails=0; [ $rc = 0 ] || fails=1
+soft=0; next_delay=""
+while true; do
+  if [ -n "$next_delay" ]; then delay="$next_delay"; next_delay=""
+  elif [ $fails = 0 ]; then delay="$CHECK_INTERVAL"; else delay="${backoff[$(( fails - 1 < 5 ? fails - 1 : 5 ))]}"; fi
+  echo "$(( $(date +%s) + delay ))" > "$RUN/gate-next"
+  sleep "$delay" & wait $!
+  if [ -f "$CONF" ]; then set -a; . "$CONF"; set +a; fi   # 管理后台可能改过配置
+  [ -f "$RUN/killswitch" ] && continue
+  /usr/local/sbin/cbox-agentenv refresh 2>/dev/null
+  [ -f "$RUN/paused" ] && { fails=0; continue; }
+  if [ $fails = 0 ] && [ "$(/usr/local/sbin/cbox-firewall gate status)" = open ]; then
+    /usr/local/sbin/cbox-net recheck --soft >/dev/null 2>"$RUN/gate-last.log"; r=$?
+    [ $r = 0 ] && { soft=0; continue; }
+    if [ $r = 4 ] && [ $soft -lt 2 ]; then          # 只是超时：30 秒后再查，连续 3 次拿不到证据才断网
+      soft=$(( soft + 1 )); LOG "复查超时（第 ${soft} 次），30 秒后再查"; next_delay=30; continue
+    fi
+    /usr/local/sbin/cbox-firewall gate close; soft=0
+    LOG "定期检查没通过，外网已关闭：$(jq -r '.reason // empty' "$RUN/gate.json" 2>/dev/null)"
+    fails=1; continue
+  fi
+  if /usr/local/sbin/cbox-net apply >/dev/null 2>"$RUN/gate-last.log"; then
+    LOG "联网检查通过，外网已恢复"; fails=0
+  else
+    fails=$(( fails + 1 ))
+    LOG "第 ${fails} 次重试没通过：$(jq -r '.reason // empty' "$RUN/gate.json" 2>/dev/null || tail -1 "$RUN/gate-last.log")"
+  fi
+done

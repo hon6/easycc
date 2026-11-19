@@ -1,0 +1,21 @@
+#!/bin/bash
+# 终端按钮打开的程序：运行环境的默认 agent（最近一次一键安装的那个，可在环境后台改）；
+# 退出后不关窗口，留在环境的命令行里。参数原样传给 agent。
+export PATH="$HOME/.local/bin:$PATH"
+id="$(cat ~/.config/easycc/default-agent 2>/dev/null)"
+declare -A BIN=([claude]=claude [codex]=codex [gemini]=gemini [cursor]=cursor-agent [copilot]=copilot [opencode]=opencode [qwen]=qwen [kimi]=kimi)
+bin="${BIN[$id]:-}"
+if [ -z "$bin" ] || ! command -v "$bin" >/dev/null; then
+  bin=""; for k in claude codex gemini cursor-agent copilot opencode qwen kimi; do command -v "$k" >/dev/null && { bin=$k; break; }; done
+fi
+if [ -z "$bin" ]; then
+  echo "这个环境还没有安装 AI agent。"
+  echo "在 easyCC 里点「打开」进入环境后台 →「Agent」，选一个一键安装（Claude Code、Codex、Gemini CLI……），装好后再点终端按钮。"
+  echo
+  exec bash -l
+fi
+"$bin" "$@"; rc=$?
+echo
+if [ "$rc" = 0 ]; then echo "$bin 已退出。"; else echo "$bin 异常退出（${rc}），原因见上面的输出。"; fi
+echo "这里是环境 $(hostname) 的终端：输入 $bin 重新启动，exit 关闭窗口。"
+exec bash -l

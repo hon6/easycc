@@ -1,0 +1,99 @@
+#!/bin/bash
+# 给 agent（和人）看的环境现状：资源、项目在电脑上的路径、能不能连电脑、外网状态。任何用户都能运行。
+#   easycc-env          文字版
+#   easycc-env --json   JSON
+#   easycc-env --hook session|prompt   给 Claude Code 的钩子用（/etc/claude-code/managed-settings.json）：
+#       session：每个会话开始时把现状加进上下文；prompt：外网关着时每次提问前提醒一句（放行时什么都不输出）
+RUN=/run/cbox
+A="$RUN/agent-env.env"
+HOOK=""; [ "${1:-}" = --hook ] && HOOK="${2:-session}"
+if [ "$HOOK" = prompt ]; then
+  [ -r "$RUN/gate.json" ] || exit 0
+  if [ -e "$RUN/paused" ]; then echo "[easyCC] 注意：用户手动暂停了这个环境的外网，联网操作会失败；需要联网请用户在 easyCC 环境后台恢复外网。"
+  elif ! jq -e '.open' "$RUN/gate.json" >/dev/null 2>&1; then
+    echo "[easyCC] 注意：这个环境的外网现在是关着的（联网检查没通过：$(jq -r '.reason // "未知"' "$RUN/gate.json")）。联网操作会失败，不要尝试绕过；请用户到 easyCC 环境后台「联网检查」处理。"
+  fi
+  exit 0
+fi
+get() { sed -n "s/^$1=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}$/\1/p" "$A" 2>/dev/null | tail -1; }
+
+# 资源：容器内存上限（cgroup）和系统内存取小的那个
+mem_total_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)"
+mem_avail_kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
+cg="$(cat /sys/fs/cgroup/memory.max 2>/dev/null)"
+if [[ "$cg" =~ ^[0-9]+$ ]] && [ $((cg / 1024)) -lt "$mem_total_kb" ]; then
+  mem_total_kb=$((cg / 1024))
+  used="$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo 0)"
+  mem_avail_kb=$(( mem_total_kb - used / 1024 ))
+fi
+gb() { awk -v k="$1" 'BEGIN{printf "%.1f", k/1048576}'; }
+cpus="$(nproc 2>/dev/null)"
+disk="$(df -h /home/dev 2>/dev/null | awk 'NR==2{print $4}')"
+
+instance="$(get INSTANCE)"; host_root="$(get HOST_ROOT)"; host_os="$(get HOST_OS)"; host_user="$(get HOST_USER)"
+access="$(get HOST_ACCESS)"; ssh_on="$(get HOST_SSH)"; ports="$(get FORWARD_PORTS)"; autofwd="$(get FORWARD_LOCALHOST)"
+proj="$(readlink -f /workspace 2>/dev/null)"; rel="${proj#/projects}"; rel="${rel#/}"
+host_proj=""; [ -n "$host_root" ] && host_proj="${host_root%/}${rel:+/$rel}"
+case "$host_os" in
+  Darwin) os_name="macOS"; lsh="zsh -l" ;;
+  Linux) os_name="Linux"; lsh="bash -l" ;;
+  *) os_name="${host_os:-未知}"; lsh="sh" ;;
+esac
+# 推荐写法：命令经标准输入交给电脑的登录 shell，原样写、不用转义引号（登录 shell 才找得到 brew / nvm 装的工具）
+sh_fmt="ssh host '${lsh}' <<'EOF'
+cd \"${host_proj}\" || exit 1
+<命令，可以多行>
+EOF"
+
+gate_state="未知"; gate_reason=""
+if [ -r "$RUN/gate.json" ]; then
+  if [ -e "$RUN/paused" ]; then gate_state="用户手动暂停"
+  elif jq -e '.open' "$RUN/gate.json" >/dev/null 2>&1; then gate_state="已放行（经代理出口）"
+  else gate_state="关闭"; gate_reason="$(jq -r '.reason // empty' "$RUN/gate.json")"; fi
+fi
+country="$(sed -n 's/^COUNTRY=//p' "$RUN/status.env" 2>/dev/null)"
+
+ssh_ok=""
+if [ "$ssh_on" = 1 ] && [ -n "$HOOK" ]; then ssh_ok="已授权（用 ssh host 前可以先 ssh host true 试一下）"
+elif [ "$ssh_on" = 1 ]; then
+  if timeout 6 ssh -o BatchMode=yes -o ConnectTimeout=4 host true 2>/dev/null; then ssh_ok="已授权，能连上"
+  else ssh_ok="已授权，但现在连不上（电脑上的「远程登录」可能没开）"; fi
+fi
+
+if [ "${1:-}" = --json ]; then
+  jq -n --arg inst "$instance" --arg cpus "$cpus" --arg mt "$(gb "$mem_total_kb")" --arg ma "$(gb "$mem_avail_kb")" --arg disk "$disk" \
+    --arg ws "$proj" --arg hp "$host_proj" --arg os "$os_name" --arg user "$host_user" --arg access "$access" --arg ssh "$ssh_on" \
+    --arg sshok "$ssh_ok" --arg fmt "$sh_fmt" --arg ports "$ports" --arg gate "$gate_state" --arg reason "$gate_reason" --arg cc "$country" \
+    '{instance:$inst, cpus:($cpus|tonumber? // null), memTotalGB:$mt, memAvailGB:$ma, diskFree:$disk, workspace:$ws, hostProjectPath:$hp,
+      hostOS:$os, hostUser:$user, hostAccess:($access=="1"), hostSSH:($ssh=="1"), hostSSHStatus:$sshok, hostCommand:$fmt,
+      forwardPorts:$ports, internet:$gate, internetReason:$reason, exitCountry:$cc}'
+  exit 0
+fi
+
+echo "easyCC 环境现状（$(date '+%F %T %Z')）"
+echo "- 这是什么：easyCC 给 AI agent 的轻量 Linux 容器（实例 ${instance:-?}），不是用户的电脑"
+echo "- 资源：CPU ${cpus} 核；内存 $(gb "$mem_total_kb") GB（现在可用 $(gb "$mem_avail_kb") GB）；主目录剩余 ${disk:-?}"
+echo "  → 不要在这里装依赖、构建、跑完整测试或开发服务器，放到电脑上做（ssh host）"
+echo "- 当前项目：/workspace → ${proj:-?}"
+if [ -n "$host_proj" ]; then
+  echo "- 电脑上的项目路径：${host_proj}（${os_name}，用户 ${host_user:-?}）；这里改文件就是改电脑上的同一份文件"
+fi
+if [ "$access" = 1 ]; then
+  echo "- 访问电脑：已授权，host.internal:端口 = 电脑上的 localhost:端口"
+else
+  echo "- 访问电脑：未授权（用户可在 easyCC 环境后台「总览 → 访问本机」打开）"
+fi
+if [ "$ssh_on" = 1 ]; then
+  echo "- SSH 控制本机：${ssh_ok}"
+  echo "- 到电脑执行（推荐写法，命令原样写、不用转义）："
+  printf '%s\n' "$sh_fmt" | sed 's/^/    /'
+else
+  echo "- SSH 控制本机：未授权（需要在电脑上执行时，请用户在「访问本机」里打开「允许 SSH 控制本机」，Mac 还要打开「系统设置 → 通用 → 共享 → 远程登录」；或者把命令交给用户在电脑终端执行）"
+fi
+if [ -n "$ports" ] || [ "$autofwd" = 1 ]; then
+  echo "- 端口转发：环境里的 ${ports:-（自动检测的）} 端口转到电脑的 localhost$([ "$autofwd" = 1 ] && echo "；新监听的端口也会自动转")"
+fi
+echo "- 外网：${gate_state}${country:+（出口国家 ${country}）}${gate_reason:+；原因：$gate_reason}"
+[ "$gate_state" = 关闭 ] && echo "  → 这是 easyCC 为保护账号故意关的，请用户到环境后台「联网检查」处理，不要尝试绕过"
+echo "- 权限：用户 dev，没有 sudo；网络只能经代理出去，不要改代理或防火墙"
+echo "- 环境自带：$(for c in git node python3 rg jq tmux; do v="$($c --version 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"; [ -n "$v" ] && printf '%s %s，' "$c" "$v"; done | sed 's/，$//')"

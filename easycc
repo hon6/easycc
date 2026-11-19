@@ -1,0 +1,683 @@
+#!/bin/bash
+# easycc —— 跑「只能经 mihomo + 指定代理出网」的 Claude Code 环境
+# 通用：Docker / Podman / OrbStack / Apple container 都能用；兼容 macOS 自带 bash 3.2
+set -euo pipefail
+
+IMAGE="easycc:latest"
+BASE="${EASYCC_HOME:-${CLAUDE_BOX_HOME:-$HOME/.easycc}}"
+# 改名前的数据目录（~/.claude-box）自动搬过来
+if [ -z "${EASYCC_HOME:-}${CLAUDE_BOX_HOME:-}" ] && [ ! -e "$BASE" ] && [ -d "$HOME/.claude-box" ]; then mv "$HOME/.claude-box" "$BASE"; fi
+: "${EASYCC_RUNTIME:=${CLAUDE_BOX_RUNTIME:-}}" "${EASYCC_ARCH:=${CLAUDE_BOX_ARCH:-}}"
+mkdir -p "$BASE"; chmod 700 "$BASE"
+[ -f "$BASE/settings.env" ] && . "$BASE/settings.env"
+
+# 脚本所在目录（跟随软链接）
+src="$0"; while [ -L "$src" ]; do d="$(cd "$(dirname "$src")" && pwd)"; src="$(readlink "$src")"; case "$src" in /*) ;; *) src="$d/$src" ;; esac; done
+ROOT="$(cd "$(dirname "$src")" && pwd)"
+
+die() { echo "错误：$*" >&2; exit 1; }
+say() { echo "▸ $*"; }
+warn() { echo "⚠ $*" >&2; }
+
+usage() {
+  cat <<'EOF'
+用法：easycc <命令> [参数]
+
+  ui                打开客户端（类似指纹浏览器的环境管理器：环境列表、代理库、批量启停）
+  build [--arch amd64|arm64] [--no-cache]
+                    构建镜像。默认 amd64（带 Kiteline；Apple 芯片上经 Rosetta 运行）；
+                    arm64 原生更快，但没有 Kiteline（官方 Linux 版只有 x86_64）
+  create <名字> --dir <项目目录> --proxy <socks5://用户:密码@主机:端口>
+         [--root <项目根目录>]  容器能看到、管理后台能切换的范围（默认 = 项目目录的上一级；
+                                上一级是主目录或 / 时只挂项目目录本身）
+         [--expect-ip IP] [--tz Asia/Tokyo] [--lang "ja-JP, ja"] [--cpus 4] [--memory 4G]
+         [--screen 1600x1000] [--browser firefox|chrome] [--allow-direct 192.168.1.0/24] [--no-autostart-browser]
+         [--admin-port 7681] [--port 6080] [--ssh-port 2222]
+                    创建实例（一个实例 = 一个代理出口 + 一个项目目录）
+  start <名字>      启动（每次按最新配置重建容器；登录状态等数据在挂载目录里不丢）
+  stop | restart <名字>
+  project <名字> [目录]   切换项目；不写目录时 Mac 上弹出选择窗口。根目录外的目录会改挂载并重启容器
+  admin <名字>      打开管理后台：使用引导、出口 IP、代理实测、环境检查、Kiteline 配对、一键重置
+  claude <名字> [参数...]   在容器里运行 claude（在 tmux 里，Kiteline 能从手机接管）
+  shell <名字>      进容器（dev 用户，项目目录）
+  root <名字>       以 root 进容器（root 同样受防火墙约束）
+  browser <名字>    打开容器的浏览器桌面（容器内 Firefox）
+  ports <名字> [add <端口>[:<电脑端口>] | rm <端口>]
+                    端口映射（像 VS Code 的「端口」）：add 8000 后电脑上 localhost:8000 就是环境里的 8000
+  open <名字> <链接>  用这个环境的浏览器打开链接（同一个出口 IP、时区、语言）；环境没启动会先启动
+  wake <名字>       唤醒空闲休眠的环境（SSH 连接时会自动调用）
+  ssh <名字> [ssh参数...]   SSH 登录容器（主机名 easycc-<名字>，Remote-SSH 里直接选它）
+  code <名字>       用 VS Code / Cursor 的 Remote-SSH 打开容器里的 /workspace
+  status <名字>     出口 IP、时区、封锁情况
+  vm start|stop|status   easyCC 虚拟机（macOS 26 以前的系统用它跑环境）
+  logs <名字> [-f]  启动日志
+  config <名字>     编辑实例配置（改完 restart 生效）
+  list              列出所有实例
+  rm <名字> [--purge]   删除容器；--purge 连同浏览器、Claude 登录、Kiteline 配对等数据一起删
+
+运行时：自动选 Apple container → Docker → Podman，可用环境变量 EASYCC_RUNTIME=docker|podman|container 指定。
+EOF
+}
+
+# ---------------- 运行时 ----------------
+# easyCC.app 自带的运行时（Apple container + Python）：在普通终端里运行 easycc 也能找到，不用另装
+APP_RT=""; APP_VM=""
+use_app_runtime() {
+  local a
+  for a in "$ROOT/.." "/Applications/easyCC.app/Contents/Resources" "$HOME/Applications/easyCC.app/Contents/Resources"; do
+    [ -x "$a/python/bin/python3" ] || [ -x "$a/runtime/container/bin/container" ] || [ -x "$a/vm/easycc-vm" ] || continue
+    APP_RT="$(cd "$a" && pwd)"
+    [ -x "$APP_RT/runtime/container/bin/container" ] && PATH="$APP_RT/runtime/container/bin:$PATH"
+    [ -x "$APP_RT/vm/easycc-vm" ] && APP_VM="$APP_RT/vm"
+    [ -d "$APP_RT/bin" ] && PATH="$APP_RT/bin:$PATH"            # 自带的 docker 命令行（虚拟机运行时用）
+    PATH="$APP_RT/python/bin:$PATH"; export PATH; return 0
+  done
+  return 1
+}
+[ "$(uname -s)" = Darwin ] && use_app_runtime || true
+
+# macOS 26 + Apple 芯片：Apple container；更早的 macOS（12–25）或 Intel：App 自带的虚拟机（Alpine + Docker）
+mac_major() { sw_vers -productVersion 2>/dev/null | cut -d. -f1; }
+apple_container_ok() { [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] && [ "$(mac_major)" -ge 26 ] 2>/dev/null && command -v container >/dev/null; }
+VM=0; VMDIR="$BASE/vm"
+pick_runtime() {
+  if [ -n "${EASYCC_RUNTIME:-}" ] && [ "$EASYCC_RUNTIME" != auto ]; then RT="$EASYCC_RUNTIME"
+  elif apple_container_ok; then RT=container
+  elif [ "$(uname -s)" = Darwin ] && [ -n "$APP_VM" ]; then RT=vm
+  elif command -v docker >/dev/null; then RT=docker
+  elif command -v podman >/dev/null; then RT=podman
+  else die "没找到容器运行时：装 Docker（Docker Desktop / OrbStack）、Podman，或用 easyCC.app（自带运行时）"; fi
+  if [ "$RT" = vm ]; then
+    [ -n "$APP_VM" ] || die "没找到 easyCC 自带的虚拟机（请用 easyCC.app）"
+    VM=1; RT=docker; export DOCKER_HOST="unix://$VMDIR/docker.sock"
+  fi
+  command -v "$RT" >/dev/null || die "找不到 $RT 命令"
+}
+RT=""
+vm_running() { [ -S "$VMDIR/docker.sock" ] && docker version >/dev/null 2>&1; }
+vm_start() {
+  vm_running && return 0
+  mkdir -p "$VMDIR"
+  say "启动 easyCC 虚拟机（第一次约 10 秒）"
+  nohup "$APP_VM/easycc-vm" run --dir "$VMDIR" --kernel "$APP_VM/kernel" --initrd "$APP_VM/initramfs.gz" --rootfs "$APP_VM/rootfs.img.gz" \
+    ${EASYCC_VM_CPUS:+--cpus $EASYCC_VM_CPUS} ${EASYCC_VM_MEMORY:+--memory $EASYCC_VM_MEMORY} >"$VMDIR/vm.log" 2>&1 </dev/null &
+  local i; for i in $(seq 1 90); do vm_running && return 0; sleep 1; done
+  tail -5 "$VMDIR/vm.log" >&2; die "虚拟机没启动起来，日志：$VMDIR/vm.log"
+}
+# 虚拟机里 Docker 发布的端口只在虚拟机的 127.0.0.1 上：把所有环境的固定端口列给 easycc-vm，由它从 Mac 本机转进去
+vm_sync_ports() {
+  [ "$VM" = 1 ] || return 0
+  local f; { for f in "$BASE"/*/meta.env; do [ -f "$f" ] && grep -E '^(PORT|SSH_PORT|ADMIN_PORT|TUNNEL_PORT)=' "$f" | cut -d= -f2; done; } | sort -un > "$VMDIR/ports.tmp" && mv "$VMDIR/ports.tmp" "$VMDIR/ports"
+}
+vm_gateway() { sed -n 's/.*"gateway":"\([0-9.]*\)".*/\1/p' "$VMDIR/guest.json" 2>/dev/null; }
+vm_ip() { sed -n 's/.*"ip":"\([0-9.]*\)".*/\1/p' "$VMDIR/guest.json" 2>/dev/null; }
+need_rt() {
+  [ -n "$RT" ] || pick_runtime
+  case "$RT" in
+    container)
+      if ! container system status >/dev/null 2>&1; then
+        say "启动容器运行时"
+        if [ -n "$APP_RT" ]; then
+          local sup="$HOME/Library/Application Support/easyCC"; mkdir -p "$sup/container" "$sup/logs"
+          container system start --install-root "$APP_RT/runtime/container" --app-root "$sup/container" --log-root "$sup/logs" --disable-kernel-install --timeout 90
+          container system kernel set --binary "$APP_RT/runtime/kernel/vmlinux" >/dev/null 2>&1 || true
+        else
+          container system start
+        fi
+      fi ;;
+    *) if [ "$VM" = 1 ]; then vm_start; vm_sync_ports
+       else "$RT" info >/dev/null 2>&1 || die "$RT 没在运行（先打开 Docker Desktop / OrbStack，或启动 docker 服务）"; fi ;;
+  esac
+}
+ARCH="${EASYCC_ARCH:-${ARCH:-amd64}}"
+# 容器用公共 DNS，不用宿主机的：宿主机开着 Clash / Surge 等 fake-ip 模式时，它给的是假地址，容器里用不了
+DNS_SERVERS="${EASYCC_DNS:-223.5.5.5 119.29.29.29 8.8.8.8}"
+dns_flags() { [ "$RT" = docker ] && return 0; local d; for d in $DNS_SERVERS; do printf -- '--dns %s ' "$d"; done; }   # docker build 没有 --dns（用 dockerd 的 dns 设置）
+plat_flags() { if [ "$RT" = container ]; then echo "--arch $ARCH"; else echo "--platform linux/$ARCH"; fi; }
+image_exists() { "$RT" image inspect "$IMAGE" >/dev/null 2>&1; }
+# 本机镜像带的架构（多架构镜像会有多行）；查不到时为空
+image_archs() {
+  if [ "$RT" = container ]; then
+    "$RT" image inspect "$IMAGE" 2>/dev/null | grep -o '"architecture" *: *"[a-z0-9]*"' | sed 's/.*"\([a-z0-9]*\)"$/\1/' | sort -u
+  else
+    "$RT" image inspect -f '{{.Architecture}}' "$IMAGE" 2>/dev/null
+  fi
+}
+cname() { echo "easycc-$1"; }
+exists() { "$RT" inspect "$(cname "$1")" >/dev/null 2>&1; }
+running() {
+  if [ "$RT" = container ]; then container ls -q 2>/dev/null | grep -qx "$(cname "$1")"
+  else "$RT" ps --format '{{.Names}}' 2>/dev/null | grep -qx "$(cname "$1")"; fi
+}
+open_url() {
+  if command -v open >/dev/null && [ "$(uname -s)" = Darwin ]; then open "$1"
+  elif command -v xdg-open >/dev/null; then xdg-open "$1" >/dev/null 2>&1 &
+  else echo "$1"; fi
+}
+check_rosetta() {
+  [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] && [ "$ARCH" = amd64 ] || return 0
+  arch -x86_64 /usr/bin/true 2>/dev/null && return 0
+  say "amd64 镜像要用 Rosetta，正在安装（需要同意许可）"
+  softwareupdate --install-rosetta --agree-to-license
+}
+
+# ---------------- 实例 ----------------
+inst_dir() { echo "$BASE/$1"; }
+load() {
+  local d; d="$(inst_dir "$1")"
+  [ -f "$d/meta.env" ] || die "实例 $1 不存在（easycc list 查看，easycc create 创建）"
+  . "$d/meta.env"; . "$d/conf/config.env"
+}
+# next_port <键名> <起始端口>：找一个所有实例都没用过的端口
+next_port() {
+  local key="$1" p="$2" f used
+  while :; do
+    used=0
+    for f in "$BASE"/*/meta.env; do [ -f "$f" ] && grep -qx "$key=$p" "$f" && used=1; done
+    [ $used = 0 ] && { echo "$p"; return; }
+    p=$((p+1))
+  done
+}
+# 项目根目录：显式给的；否则项目目录的上一级（上一级是主目录或 / 时只用项目目录本身，不把整个主目录交给容器）
+pick_root() {
+  local dir="$1" root="${2:-}"
+  if [ -n "$root" ]; then
+    mkdir -p "$root"; root="$(cd "$root" && pwd)"
+    case "$dir/" in "$root"/*) ;; *) echo "错误：项目目录 $dir 不在根目录 $root 里" >&2; return 1 ;; esac
+  else
+    root="$(dirname "$dir")"
+    case "$root" in "$HOME"|/|/Users|/home) root="$dir" ;; esac
+  fi
+  echo "$root"
+}
+rel_of() { local r="${2#$1}"; echo "${r#/}"; }
+rand() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1"; }
+
+# 系统底包：从国内镜像站下载 Ubuntu 官方底包（约 30 MB，校验 SHA-256），载入成 easycc-base:24.04-<架构>。不依赖镜像仓库。
+ensure_base() {
+  local tag="easycc-base:24.04-$ARCH" py f
+  "$RT" image inspect "$tag" >/dev/null 2>&1 && return 0
+  py="${EASYCC_PYTHON:-$(command -v python3 || true)}"; [ -n "$py" ] || die "需要 python3"
+  f="$BASE/_cache/base-$ARCH.tar"; mkdir -p "$BASE/_cache"
+  say "下载 Ubuntu 24.04 系统底包（${ARCH}，约 30 MB，国内镜像站）"
+  "$py" -I "$ROOT/tools/base-image.py" base --arch "$ARCH" --out "$f" --tag "$tag" --cache "$BASE/_cache" || die "系统底包下载失败"
+  case "$RT" in
+    container) container image load -i "$f" >/dev/null || die "载入底包失败" ;;
+    *) "$py" -I "$ROOT/tools/oci-to-docker.py" "$f" --platform "linux/$ARCH" --tag "$tag" | "$RT" load >/dev/null || die "载入底包失败" ;;
+  esac
+  rm -f "$f"
+  "$RT" image inspect "$tag" >/dev/null 2>&1 || die "载入底包后找不到 $tag"
+}
+
+cmd_build() {
+  local extra=() py apt node base_args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --arch) ARCH="$2"; shift 2 ;;
+      *) extra+=("$1"); shift ;;
+    esac
+  done
+  case "$ARCH" in amd64|arm64) ;; *) die "--arch 只能是 amd64 或 arm64" ;; esac
+  need_rt; check_rosetta
+  echo "ARCH=$ARCH" > "$BASE/settings.env"
+  py="${EASYCC_PYTHON:-$(command -v python3 || true)}"
+  if [ -n "$py" ] && [ -f "$ROOT/tools/base-image.py" ] && [ -z "${EASYCC_BASE_IMAGE:-}" ]; then
+    ensure_base
+    base_args=(--build-arg "BASE_IMAGE=easycc-base:24.04-$ARCH")
+    apt="$("$py" -I "$ROOT/tools/base-image.py" apt --arch "$ARCH" 2>/dev/null || true)"
+    node="$("$py" -I "$ROOT/tools/base-image.py" node 2>/dev/null || true)"
+    [ -n "$apt" ] && { say "软件源：$apt"; base_args+=(--build-arg "APT_MIRROR=$apt"); }
+    [ -n "$node" ] && base_args+=(--build-arg "NODE_MIRROR=$node")
+  elif [ -n "${EASYCC_BASE_IMAGE:-}" ]; then
+    base_args=(--build-arg "BASE_IMAGE=$EASYCC_BASE_IMAGE")
+  fi
+  # 环境里 dev 用户的 UID/GID 跟电脑当前用户一致（挂载的项目文件属主对得上）；root 运行时用 1000（0 和镜像里的 root 冲突）
+  local huid hgid; huid="$(id -u)"; hgid="$(id -g)"; [ "$huid" = 0 ] && { huid=1000; hgid=1000; }
+  say "用 $RT 在本机构建 ${IMAGE}（linux/$ARCH$([ "$ARCH" = amd64 ] && echo '，含 Kiteline' || echo '，不含 Kiteline')），首次约 5–10 分钟"
+  # shellcheck disable=SC2046
+  "$RT" build $(plat_flags) $(dns_flags) ${base_args[@]+"${base_args[@]}"} ${extra[@]+"${extra[@]}"} \
+    --build-arg HOST_UID="$huid" --build-arg HOST_GID="$hgid" -t "$IMAGE" "$ROOT/image"
+}
+
+cmd_create() {
+  local name="${1:-}"; [ -n "$name" ] || die "请给实例起个名字"; shift
+  case "$name" in *[!A-Za-z0-9_-]*) die "名字只能用字母、数字、- 和 _" ;; esac
+  local dir="" root="" proxy="" expect="" port="" sshport="" adminport="" tz="" lang="" cpus=4 mem=4G screen=1600x1000 allow="" autob=1 browser=firefox
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) dir="$2"; shift 2 ;;
+      --root) root="$2"; shift 2 ;;
+      --proxy) proxy="$2"; shift 2 ;;
+      --expect-ip) expect="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --ssh-port) sshport="$2"; shift 2 ;;
+      --admin-port) adminport="$2"; shift 2 ;;
+      --tz) tz="$2"; shift 2 ;;
+      --lang) lang="$2"; shift 2 ;;
+      --cpus) cpus="$2"; shift 2 ;;
+      --memory) mem="$2"; shift 2 ;;
+      --screen) screen="$2"; shift 2 ;;
+      --browser) browser="$2"; shift 2; case "$browser" in firefox|chrome) ;; *) die "--browser 只能是 firefox 或 chrome" ;; esac ;;
+      --allow-direct) allow="$2"; shift 2 ;;
+      --no-autostart-browser) autob=0; shift ;;
+      *) die "未知参数 $1" ;;
+    esac
+  done
+  [ -n "$dir" ] || die "缺少 --dir 项目目录"
+  [ -n "$proxy" ] || die "缺少 --proxy，例如 socks5://user:pass@1.2.3.4:1080"
+  case "$proxy" in socks5://*|socks5h://*|http://*) ;; *) die "--proxy 需以 socks5:// 或 http:// 开头" ;; esac
+  mkdir -p "$dir"; dir="$(cd "$dir" && pwd)"
+  root="$(pick_root "$dir" "$root")" || exit 1
+  local d; d="$(inst_dir "$name")"
+  [ -e "$d" ] && die "实例 $name 已存在（先 easycc rm $name --purge）"
+  [ -n "$port" ] || port="$(next_port PORT 6080)"
+  [ -n "$sshport" ] || sshport="$(next_port SSH_PORT 2222)"
+  [ -n "$adminport" ] || adminport="$(next_port ADMIN_PORT 7681)"
+  mkdir -p "$d/conf" "$d/home"; chmod 700 "$d" "$d/conf"
+  cat > "$d/meta.env" <<EOF
+ROOT_DIR='$root'
+PORT=$port
+SSH_PORT=$sshport
+ADMIN_PORT=$adminport
+CPUS=$cpus
+MEMORY=$mem
+EOF
+  {
+    echo "# easycc 实例 $name 的容器内配置（改完 easycc restart $name 生效）"
+    echo "PROXY_URL='$proxy'"
+    echo "# 当前项目（相对项目根目录）；管理后台和 easycc project 会改它"
+    echo "PROJECT='$(rel_of "$root" "$dir")'"
+    echo "# 固定出口 IP：出口不是它就断网（留空 = 动态 IP，按 EXIT_RULE）"
+    echo "EXPECT_IP='$expect'"
+    echo "# 动态 IP 允许变化的范围：country 同一国家 / region 同一州省 / city 同一城市 / any 不限（出口在中国大陆一律断网）"
+    echo "EXIT_RULE=country"
+    echo "# 留空 = 按出口 IP 自动匹配"
+    echo "TZ_OVERRIDE='$tz'"
+    echo "ACCEPT_LANGUAGE='$lang'"
+    echo "SCREEN=$screen"
+    echo "VNC_PASSWORD=$(rand 8)"
+    echo "ADMIN_TOKEN=$(rand 24)"
+    echo "AUTOSTART_BROWSER=$autob"
+    echo "# 这个环境的「机器身份」种子：网卡 MAC、主机名、machine-id、字体组合和渲染方式都由它定，每个环境不同、一直不变"
+    echo "FP_SEED=$(hex_seed)"
+    echo "# 环境浏览器：firefox / chrome（Chrome 只有 amd64 镜像带；改完重启浏览器生效）"
+    echo "BROWSER=$browser"
+    echo "# 允许直连的网段（逗号分隔，例如本机局域网服务）；留空 = 全部封锁"
+    echo "ALLOW_DIRECT_CIDRS='$allow'"
+    echo "CHECK_INTERVAL=300"
+  } > "$d/conf/config.env"
+  chmod 600 "$d/conf/config.env"
+  say "已创建实例 ${name}：项目 ${dir}（项目根目录 ${root}）"
+  say "端口（只监听本机）：管理后台 $adminport · 浏览器桌面 $port · SSH $sshport"
+  say "下一步：easycc start $name"
+}
+
+# 旧实例补齐新加的端口和令牌
+upgrade_meta() {
+  local name="$1" d; d="$(inst_dir "$name")"
+  if [ -z "${ROOT_DIR:-}" ] && [ -n "${DIR:-}" ]; then ROOT_DIR="$DIR"; echo "ROOT_DIR='$DIR'" >> "$d/meta.env"; fi
+  [ -n "${SSH_PORT:-}" ] || { SSH_PORT="$(next_port SSH_PORT 2222)"; echo "SSH_PORT=$SSH_PORT" >> "$d/meta.env"; }
+  [ -n "${ADMIN_PORT:-}" ] || { ADMIN_PORT="$(next_port ADMIN_PORT 7681)"; echo "ADMIN_PORT=$ADMIN_PORT" >> "$d/meta.env"; }
+  [ -n "${ADMIN_TOKEN:-}" ] || { ADMIN_TOKEN="$(rand 24)"; echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> "$d/conf/config.env"; }
+  [ -n "${TUNNEL_PORT:-}" ] || { TUNNEL_PORT="$(next_port TUNNEL_PORT 7781)"; echo "TUNNEL_PORT=$TUNNEL_PORT" >> "$d/meta.env"; }
+}
+
+# 专用密钥 + authorized_keys + ~/.ssh/config 里的 Host 条目
+write_ssh_config() {
+  local mf n
+  : > "$BASE/ssh_config.tmp"
+  for mf in "$BASE"/*/meta.env; do
+    [ -f "$mf" ] || continue
+    n="$(basename "$(dirname "$mf")")"
+    ( . "$mf"; [ -n "${SSH_PORT:-}" ] || exit 0
+      cat <<EOF
+# 环境空闲休眠了就先唤醒（没休眠时只是一次 test，不耽误连接）
+Match host easycc-$n exec "test ! -f '$BASE/$n/sleeping' || '$ROOT/easycc' wake '$n'"
+Host easycc-$n
+  HostName 127.0.0.1
+  Port $SSH_PORT
+  User dev
+  IdentityFile $BASE/id_ed25519
+  IdentitiesOnly yes
+  HostKeyAlias easycc-$n
+  UserKnownHostsFile $BASE/known_hosts
+  StrictHostKeyChecking accept-new
+
+EOF
+    ) >> "$BASE/ssh_config.tmp"
+  done
+  mv "$BASE/ssh_config.tmp" "$BASE/ssh_config"
+}
+setup_ssh() {
+  local name="$1" d f; d="$(inst_dir "$name")"
+  [ -f "$BASE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C easycc -f "$BASE/id_ed25519"
+  { cat "$BASE/id_ed25519.pub"; cat "$HOME"/.ssh/id_*.pub 2>/dev/null || true; } > "$d/conf/authorized_keys"
+  write_ssh_config
+  f="$HOME/.ssh/config"; mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; touch "$f"
+  # 改名前加的那行 Include 换掉
+  if grep -q '^Include .*/\.claude-box/ssh_config$' "$f"; then grep -v '^Include .*/\.claude-box/ssh_config$' "$f" > "$f.cbox.tmp" && mv "$f.cbox.tmp" "$f"; chmod 600 "$f"; fi
+  if ! grep -qF "Include $BASE/ssh_config" "$f"; then
+    # Include 必须放在所有 Host 段之前才全局生效
+    { echo "Include $BASE/ssh_config"; echo; cat "$f"; } > "$f.cbox.tmp" && mv "$f.cbox.tmp" "$f"; chmod 600 "$f"
+    say "已在 ~/.ssh/config 顶部加入：Include $BASE/ssh_config"
+  fi
+}
+
+admin_url() { echo "http://127.0.0.1:$ADMIN_PORT/login?k=$ADMIN_TOKEN"; }
+
+hex_seed() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
+# 由 FP_SEED 推出这个环境的网卡 MAC（本地管理的单播地址，虚拟机网卡通常就是这类）和主机名
+persona_mac() { local h="$1"; printf '%02x:%s:%s:%s:%s:%s' $(( (0x${h:0:2} & 0xfc) | 0x02 )) "${h:2:2}" "${h:4:2}" "${h:6:2}" "${h:8:2}" "${h:10:2}"; }
+persona_host() { echo "ubuntu-${1:12:6}"; }
+ensure_seed() {   # 老环境没有种子：补一个写进配置
+  local f; f="$(inst_dir "$1")/conf/config.env"
+  grep -q '^FP_SEED=' "$f" 2>/dev/null && return
+  printf '%s\n' "# 这个环境的「机器身份」种子：网卡 MAC、主机名、machine-id、字体组合和渲染方式都由它定，每个环境不同、一直不变" "FP_SEED=$(hex_seed)" >> "$f"
+}
+
+cmd_start() {
+  local name="${1:-}"; [ -n "$name" ] || die "缺少实例名"
+  rm -f "$(inst_dir "$name")/sleeping"
+  need_rt; ensure_seed "$name"; load "$name"; upgrade_meta "$name"
+  image_exists || cmd_build
+  # 设置里改了架构但还没重新构建镜像时，按镜像实际的架构启动，否则运行时直接报「镜像不支持该架构」
+  local ia; ia="$(image_archs)"
+  if [ -n "$ia" ] && ! printf '%s\n' "$ia" | grep -qx "$ARCH"; then
+    say "镜像是 $(printf %s "$ia" | head -1) 架构，按它启动（设置里的 $ARCH 要重新构建镜像后才生效）"
+    ARCH="$(printf %s "$ia" | head -1)"
+  fi
+  local seed; seed="$(sed -n "s/^FP_SEED=['\"]\{0,1\}\([0-9a-f]*\).*/\1/p" "$(inst_dir "$name")/conf/config.env" | tail -1)"
+  exists "$name" && "$RT" rm -f "$(cname "$name")" >/dev/null 2>&1 || true
+  "$RT" rm -f "cbox-$name" >/dev/null 2>&1 || true    # 改名前的容器
+  local d; d="$(inst_dir "$name")"
+  setup_ssh "$name"
+  stop_portfwd "$name"
+  local args=(run -d --name "$(cname "$name")" --cap-add NET_ADMIN --cap-add NET_RAW
+    -v "$ROOT_DIR:/projects" -v "$d/home:/home/dev" -v "$d/conf:/etc/cbox"
+    $(dns_flags)
+    -e "INSTANCE=$name" -e "HOST_ROOT=$ROOT_DIR" -e "HOST_RELAY_PORT=$((TUNNEL_PORT + 100))" -e "HOST_VNC_PORT=$PORT" -e "HOST_SSH_PORT=$SSH_PORT" -e "CBOX_RUNTIME=$RT")
+  if [ "$RT" = container ]; then
+    container run --help 2>&1 | grep -q -- '--cap-add' || die "当前 Apple container 版本不支持 --cap-add，请升级"
+    # 不用 -p：macOS「本地网络」权限会让运行时的端口转发报 No route to host。改用 vsock 发布 unix 套接字，再由本机小程序转成端口
+    mkdir -p "$d/sock"; rm -f "$d/sock/"*.sock
+    args+=(--publish-socket "$d/sock/admin.sock:/run/cbox/sock/admin.sock" --publish-socket "$d/sock/vnc.sock:/run/cbox/sock/vnc.sock"
+           --publish-socket "$d/sock/ssh.sock:/run/cbox/sock/ssh.sock" --publish-socket "$d/sock/tunnel.sock:/run/cbox/sock/tunnel.sock")
+    args+=(--arch "$ARCH" -c "$CPUS" -m "$MEMORY")
+    [ ${#seed} -ge 18 ] && args+=(--network "default,mac=$(persona_mac "$seed")")
+    args+=(--cap-add CAP_SYS_ADMIN)   # 只给 cbox-init 改主机名用（不能从外面指定），它改完马上从能力集里去掉
+    container run --help 2>&1 | grep -q -- '--shm-size' && args+=(--shm-size 1G)
+  else
+    args+=(-p "127.0.0.1:$ADMIN_PORT:7681" -p "127.0.0.1:$PORT:6080" -p "127.0.0.1:$SSH_PORT:22" -p "127.0.0.1:$TUNNEL_PORT:7682")
+    if [ "$VM" = 1 ]; then args+=(--add-host "host.docker.internal:$(vm_gateway)")   # 虚拟机的网关就是 Mac
+    elif [ "$RT" = docker ]; then args+=(--add-host "host.docker.internal:host-gateway")   # Podman 自己会加 host.containers.internal
+    fi
+    [ ${#seed} -ge 18 ] && args+=(--mac-address "$(persona_mac "$seed")")
+    args+=(--platform "linux/$ARCH" --cpus "$CPUS" -m "$MEMORY" --shm-size 1g --hostname "$(persona_host "${seed:-$(printf %s "$name" | md5sum | cut -c1-32)}")"
+      --sysctl net.ipv6.conf.all.disable_ipv6=1)
+  fi
+  say "用 $RT 启动 $(cname "$name")"
+  "$RT" "${args[@]}" "$IMAGE" >/dev/null
+  say "等待网络自检…"
+  local i st=""
+  for i in $(seq 1 300); do
+    st="$("$RT" exec "$(cname "$name")" cat /run/cbox/state 2>/dev/null || true)"
+    case "$st" in
+      running) break ;;
+      FAILED*|KILLSWITCH*) "$RT" logs "$(cname "$name")" 2>&1 | tail -15; die "启动失败：$st" ;;
+    esac
+    running "$name" || { "$RT" logs "$(cname "$name")" 2>&1 | tail -15; die "容器已退出"; }
+    sleep 1
+  done
+  [ "$st" = running ] || die "等待超时，查看：easycc logs $name"
+  start_portfwd "$name"
+  "$RT" exec "$(cname "$name")" cat /run/cbox/status.env | sed 's/^/   /'
+  local gate; gate="$("$RT" exec "$(cname "$name")" /usr/local/sbin/cbox-firewall gate status 2>/dev/null || true)"
+  if [ "$gate" != open ]; then
+    warn "联网检查没通过，外网先关着（终端、文件照常可用，后台会自动重试）：$("$RT" exec "$(cname "$name")" jq -r '.reason // empty' /run/cbox/gate.json 2>/dev/null)"
+  fi
+  say "管理后台：easycc admin $name   （$(admin_url)）"
+  say "运行 Claude：easycc claude $name   ·   SSH / Remote-SSH：ssh easycc-$name"
+}
+
+# 电脑端端口转发：环境里的开发服务端口自动转到电脑的 localhost；
+# Apple container 下管理后台 / 浏览器桌面 / SSH 也走这里（本机端口 → 环境发布出来的 unix 套接字）
+start_portfwd() {
+  local name="$1" d py; d="$(inst_dir "$name")"
+  py="${EASYCC_PYTHON:-$(command -v python3 || true)}"
+  [ -n "$py" ] || { say "没有 python3：端口自动转发不可用"; return; }
+  stop_portfwd "$name"
+  local fwd=(--pidfile "$d/portfwd.pid" --state "$d/ports.json" --token "$ADMIN_TOKEN" --ports-file "$d/conf/config.env" --relay-port "$((TUNNEL_PORT + 100))")
+  if [ "$RT" = container ]; then
+    fwd+=(--tunnel "unix:$d/sock/tunnel.sock"
+          "127.0.0.1:$ADMIN_PORT=$d/sock/admin.sock" "127.0.0.1:$PORT=$d/sock/vnc.sock" "127.0.0.1:$SSH_PORT=$d/sock/ssh.sock")
+  else
+    fwd+=(--tunnel "tcp:127.0.0.1:$TUNNEL_PORT")
+    [ "$VM" = 1 ] && fwd+=(--relay-bind "$(vm_gateway)" --relay-peer "$(vm_ip)")
+  fi
+  # 端口映射默认只转用户在「端口」里添加的；FORWARD_LOCALHOST=1 时检测到的端口也自动转
+  [ "${FORWARD_LOCALHOST:-0}" = 1 ] && fwd+=(--auto)
+  nohup "$py" "$ROOT/manager/cbox_portfwd.py" "${fwd[@]}" >"$d/portfwd.log" 2>&1 </dev/null &
+  sleep 0.5
+}
+stop_portfwd() {
+  local f; f="$(inst_dir "$1")/portfwd.pid"
+  [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; rm -f "$f"
+}
+
+# 唤醒空闲休眠的环境（SSH / VS Code 连接时由 ssh_config 的 Match exec 调用）：没休眠就什么都不做。
+# 同时来的几个连接只启动一次，其余的等它启动完。运行时按客户端设置里选的来。
+cmd_wake() {
+  local name="$1" d; d="$(inst_dir "$name")"
+  [ -f "$d/sleeping" ] || return 0
+  find "$d/.waking" -maxdepth 0 -mmin +5 -exec rmdir {} \; 2>/dev/null || true   # 上次唤醒中途被杀留下的锁
+  if mkdir "$d/.waking" 2>/dev/null; then
+    local r=""; [ -z "${EASYCC_RUNTIME:-}" ] && [ -f "$BASE/manager.json" ] && r="$(sed -n 's/.*"runtime": *"\([a-z]*\)".*/\1/p' "$BASE/manager.json" | head -1)"
+    [ "$r" = auto ] && r=""
+    echo "easyCC：环境 $name 在休眠，正在唤醒（约半分钟）…" >&2
+    EASYCC_RUNTIME="${EASYCC_RUNTIME:-$r}" bash "$ROOT/easycc" start "$name" >"$d/wake.log" 2>&1 || echo "easyCC：唤醒失败，看 $d/wake.log" >&2
+    rmdir "$d/.waking"
+  else
+    local i; for i in $(seq 180); do [ -d "$d/.waking" ] || break; sleep 1; done
+  fi
+}
+
+cmd_stop() { need_rt; load "$1"; stop_portfwd "$1"; running "$1" && "$RT" stop "$(cname "$1")" >/dev/null; say "已停止 $1"; }
+
+as_dev() {
+  local name="$1"; shift
+  need_rt; load "$name"; running "$name" || die "实例没在运行：easycc start $name"
+  "$RT" exec -it -u dev -w /workspace "$(cname "$name")" "$@"
+}
+cmd_claude() {
+  local n="$1"; shift
+  # 在 tmux 里跑：断开终端不中断，Kiteline 也能从手机投递消息；已有会话就接上
+  # cbox-claude：Claude 退出后终端不关，留在环境命令行（旧镜像没有它就直接跑 claude）
+  as_dev "$n" bash -lc 'c=claude; command -v cbox-claude >/dev/null && c=cbox-claude; exec tmux new-session -A -s claude -c /workspace -- "$c" "$@"' claude "$@"
+}
+cmd_shell() { as_dev "$1" bash -l; }
+cmd_root() { need_rt; load "$1"; "$RT" exec -it -w /workspace "$(cname "$1")" bash -l; }
+# easyCC 虚拟机（macOS 12–25 的运行时）：easycc vm start | stop | status
+cmd_vm() {
+  [ -n "$RT" ] || pick_runtime
+  [ "$VM" = 1 ] || die "当前运行时不是 easyCC 虚拟机（${RT}）"
+  case "${1:-status}" in
+    start) vm_start; vm_sync_ports; say "虚拟机已运行：$(vm_ip)" ;;
+    stop) "$APP_VM/easycc-vm" stop --dir "$VMDIR" ;;
+    status) if vm_running; then echo "运行中 · IP $(vm_ip) · $(docker info --format '{{.NCPU}} 核 / {{.MemTotal}} 字节内存' 2>/dev/null)"; else echo "未运行"; fi ;;
+    *) die "用法：easycc vm start|stop|status" ;;
+  esac
+}
+
+cmd_status() { need_rt; load "$1"; running "$1" || die "实例没在运行"; "$RT" exec "$(cname "$1")" bash -lc cbox-status; }
+cmd_logs() { local n="$1"; shift; need_rt; "$RT" logs "$@" "$(cname "$n")"; }
+cmd_admin() { load "$1"; upgrade_meta "$1"; say "打开管理后台 $(admin_url)"; open_url "$(admin_url)"; }
+cmd_browser() {
+  load "$1"
+  local url="http://127.0.0.1:$PORT/easycc.html?name=$1&password=$VNC_PASSWORD"
+  say "打开 $url"; open_url "$url"
+}
+cmd_open() {
+  local name="$1" url="${2:-}"
+  case "$url" in http://*|https://*) ;; "") die "用法：easycc open $name <链接>" ;; *) url="https://$url" ;; esac
+  need_rt; load "$name"
+  running "$name" || cmd_start "$name"
+  "$RT" exec "$(cname "$name")" /usr/local/bin/cbox-browser "$url" || die "打开失败（环境桌面还没就绪？稍等几秒再试）"
+  say "已在 $name 的浏览器中打开：$url"
+  cmd_browser "$name"
+}
+
+cmd_ports() {
+  local name="$1" act="${2:-}" spec="${3:-}"; load "$name"; local d f; d="$(inst_dir "$name")"; f="$d/ports.json"
+  if [ -n "$act" ]; then
+    case "$spec" in ""|*[!0-9:]*) die "用法：easycc ports $name add 8000[:电脑端口] | rm 8000" ;; esac
+    local cur new e; cur="$(sed -n "s/^FORWARD_PORTS=['\"]*\([0-9:,]*\).*/\1/p" "$d/conf/config.env" | tail -1)"
+    new=""; for e in ${cur//,/ }; do [ "${e%%:*}" = "${spec%%:*}" ] || new="$new,$e"; done
+    case "$act" in add) new="$new,$spec" ;; rm) ;; *) die "只支持 add / rm" ;; esac
+    new="${new#,}"
+    grep -v '^FORWARD_PORTS=' "$d/conf/config.env" > "$d/conf/config.env.tmp"; echo "FORWARD_PORTS='$new'" >> "$d/conf/config.env.tmp"
+    mv "$d/conf/config.env.tmp" "$d/conf/config.env"; chmod 600 "$d/conf/config.env"
+    say "已$([ "$act" = add ] && echo 添加 || echo 停止转发) ${spec}，几秒内生效"; sleep 3
+  fi
+  [ -f "$f" ] || die "端口转发没在运行（环境没启动，或电脑上没有 python3）"
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+if not d.get("ok"):
+    print("隧道暂时连不上：%s" % d.get("error"))
+ps = d.get("ports") or []
+if not ps:
+    print("还没有转发的端口。添加：easycc ports <环境> add 8000")
+for p in ps:
+    host = ("http://localhost:%d" % p["host"]) if p.get("host") else "（等待中）"
+    print("环境 :%-6d → %-24s %-10s %s" % (p["env"], host, p.get("proc") or "", "运行中" if p.get("listening") else "环境里还没有服务在监听"))
+det = d.get("detected") or []
+if det:
+    print("环境里还在监听（没转发）：" + "  ".join("%d%s" % (x["port"], "(" + x["proc"] + ")" if x.get("proc") else "") for x in det))
+' "$f"
+}
+
+cmd_ssh() { local n="$1"; shift; load "$n"; [ -f "$BASE/ssh_config" ] || write_ssh_config; exec ssh -F "$BASE/ssh_config" "easycc-$n" "$@"; }
+cmd_code() {
+  load "$1"; [ -f "$BASE/ssh_config" ] || write_ssh_config
+  setup_ssh "$1" >/dev/null   # 确保 ~/.ssh/config 引入了 easyCC 的 Host 条目，Remote-SSH 才认得 easycc-<名字>
+  local ed="" c
+  # 先找 PATH 里的命令；App 里启动时 PATH 很短，再到常见安装位置找（不要求用户装 code 命令）
+  for c in code cursor \
+    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" "$HOME/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+    "/Applications/Cursor.app/Contents/Resources/app/bin/cursor" "$HOME/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
+    "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders" \
+    /usr/local/bin/code /opt/homebrew/bin/code /usr/bin/code /snap/bin/code /usr/local/bin/cursor /opt/homebrew/bin/cursor; do
+    if [ "${c#/}" = "$c" ]; then command -v "$c" >/dev/null && { ed="$(command -v "$c")"; break; }
+    elif [ -x "$c" ]; then ed="$c"; break; fi
+  done
+  if [ -n "$ed" ]; then
+    # 编辑器自己的命令会在没装 Remote-SSH 时提示安装；后台运行，不占着客户端
+    nohup "$ed" --remote "ssh-remote+easycc-$1" /workspace >/dev/null 2>&1 &
+    say "已用 $(basename "$ed") 打开 easycc-$1:/workspace"
+    return 0
+  fi
+  # 没有命令行工具：用 vscode:// 链接让系统里的 VS Code 打开（需要已装 Remote-SSH 扩展）
+  local url="vscode://vscode-remote/ssh-remote+easycc-$1/workspace"
+  if [ "$(uname -s)" = Darwin ] && open "$url" 2>/dev/null; then say "已用 VS Code 打开 easycc-$1:/workspace"; return 0; fi
+  command -v xdg-open >/dev/null && xdg-open "$url" >/dev/null 2>&1 && { say "已用 VS Code 打开 easycc-$1:/workspace"; return 0; }
+  die "没找到 VS Code 或 Cursor：装好后再点一次（需要 Remote-SSH 扩展）"
+}
+cmd_project() {
+  local name="$1" dir="${2:-}" d; d="$(inst_dir "$name")"
+  load "$name"; upgrade_meta "$name"
+  if [ -z "$dir" ]; then
+    if [ "$(uname -s)" = Darwin ]; then
+      dir="$(osascript -e "POSIX path of (choose folder with prompt \"选择 $name 的项目目录\" default location POSIX file \"$ROOT_DIR\")" 2>/dev/null)" || die "已取消"
+    else
+      die "用法：easycc project $name <目录>（也可以在管理后台里切换）"
+    fi
+  fi
+  mkdir -p "$dir"; dir="$(cd "$dir" && pwd)"
+  case "$dir/" in
+    "$ROOT_DIR"/*)
+      local rel; rel="$(rel_of "$ROOT_DIR" "$dir")"
+      need_rt
+      if running "$name"; then "$RT" exec "$(cname "$name")" /usr/local/sbin/cbox-project set "$rel" >/dev/null
+      else grep -v '^PROJECT=' "$d/conf/config.env" > "$d/conf/config.env.tmp"; echo "PROJECT='$rel'" >> "$d/conf/config.env.tmp"; mv "$d/conf/config.env.tmp" "$d/conf/config.env"; chmod 600 "$d/conf/config.env"; fi
+      say "当前项目：$dir" ;;
+    *)
+      # 不在根目录里：换根目录（改挂载），要重建容器
+      local root; root="$(pick_root "$dir" "")"
+      grep -v '^ROOT_DIR=' "$d/meta.env" > "$d/meta.env.tmp"; echo "ROOT_DIR='$root'" >> "$d/meta.env.tmp"; mv "$d/meta.env.tmp" "$d/meta.env"
+      grep -v '^PROJECT=' "$d/conf/config.env" > "$d/conf/config.env.tmp"; echo "PROJECT='$(rel_of "$root" "$dir")'" >> "$d/conf/config.env.tmp"
+      mv "$d/conf/config.env.tmp" "$d/conf/config.env"; chmod 600 "$d/conf/config.env"
+      say "项目根目录改为 ${root}，当前项目 $dir"
+      need_rt; running "$name" && { say "重建容器以更换挂载"; cmd_start "$name"; } || true ;;
+  esac
+}
+
+cmd_ui() {
+  command -v python3 >/dev/null || die "客户端需要 python3（Mac 上运行 xcode-select --install 安装命令行工具）"
+  # 已经开着就只打开窗口
+  if [ -f "$BASE/manager.url" ]; then
+    local url port; url="$(cat "$BASE/manager.url")"; port="${url#http://127.0.0.1:}"; port="${port%%/*}"
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import cbox_manager as m; m.open_window(sys.argv[2])' "$ROOT/manager" "$url"
+      say "客户端已在运行：$url"; return
+    fi
+  fi
+  say "启动客户端（关掉这个终端窗口或按 Ctrl+C 退出）"
+  exec python3 "$ROOT/manager/cbox_manager.py" "$@"
+}
+
+cmd_config() { load "$1"; "${EDITOR:-nano}" "$(inst_dir "$1")/conf/config.env"; say "改完执行 easycc restart $1 生效"; }
+
+cmd_list() {
+  local f n st
+  [ -n "$RT" ] || pick_runtime
+  printf '%-14s %-8s %-6s %-6s %-6s %s\n' 名字 状态 后台 桌面 SSH 项目
+  for f in "$BASE"/*/meta.env; do
+    [ -f "$f" ] || continue
+    n="$(basename "$(dirname "$f")")"
+    ( . "$f"; st=已停止; running "$n" && st=运行中
+      PROJECT=""; . "$(dirname "$f")/conf/config.env" 2>/dev/null || true
+      r="${ROOT_DIR:-${DIR:-}}"; printf '%-14s %-8s %-6s %-6s %-6s %s\n' "$n" "$st" "${ADMIN_PORT:--}" "$PORT" "${SSH_PORT:--}" "$r${PROJECT:+/$PROJECT}" )
+  done
+  echo "（运行时：${RT}，镜像架构：${ARCH}）"
+}
+
+cmd_rm() {
+  local name="${1:-}" purge="${2:-}"; [ -n "$name" ] || die "缺少实例名"
+  need_rt
+  stop_portfwd "$name"
+  exists "$name" && "$RT" rm -f "$(cname "$name")" >/dev/null
+  if [ "$purge" = --purge ]; then
+    rm -rf "$(inst_dir "$name")"; write_ssh_config; say "已删除实例 $name 及其数据（项目目录未动）"
+  else
+    say "已删除容器 ${name}（配置和登录数据保留在 $(inst_dir "$name")）"
+  fi
+}
+
+c="${1:-}"; [ $# -gt 0 ] && shift
+case "$c" in
+  build) cmd_build "$@" ;;
+  create) cmd_create "$@" ;;
+  start|restart) cmd_start "${1:-}" ;;
+  stop) cmd_stop "${1:?缺少实例名}" ;;
+  wake) cmd_wake "${1:?缺少实例名}" ;;
+  ui) cmd_ui "$@" ;;
+  admin) cmd_admin "${1:?缺少实例名}" ;;
+  project) cmd_project "${1:?缺少实例名}" "${2:-}" ;;
+  claude) cmd_claude "${1:?缺少实例名}" "${@:2}" ;;
+  shell) cmd_shell "${1:?缺少实例名}" ;;
+  root) cmd_root "${1:?缺少实例名}" ;;
+  browser) cmd_browser "${1:?缺少实例名}" ;;
+  ports) cmd_ports "${1:?缺少实例名}" "${2:-}" "${3:-}" ;;
+  portfwd) need_rt; load "${1:?缺少实例名}"; upgrade_meta "$1"; running "$1" && start_portfwd "$1" ;;   # 客户端用：转发进程丢了时恢复
+  open) cmd_open "${1:?缺少实例名}" "${2:-}" ;;
+  ssh) cmd_ssh "${1:?缺少实例名}" "${@:2}" ;;
+  code) cmd_code "${1:?缺少实例名}" ;;
+  status) cmd_status "${1:?缺少实例名}" ;;
+  vm) cmd_vm "$@" ;;
+  logs) cmd_logs "${1:?缺少实例名}" "${@:2}" ;;
+  config) cmd_config "${1:?缺少实例名}" ;;
+  list|ls) cmd_list ;;
+  rm) cmd_rm "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) die "未知命令 ${c}（easycc help）" ;;
+esac

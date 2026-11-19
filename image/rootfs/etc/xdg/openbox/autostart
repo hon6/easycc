@@ -1,0 +1,2 @@
+xsetroot -solid '#2e3440' &
+[ "${CBOX_AUTOSTART_BROWSER:-1}" = 1 ] && setsid /usr/local/bin/cbox-browser-keeper &

@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "/usr/local/bin/easycc-env --hook session", "timeout": 10 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "/usr/local/bin/easycc-env --hook prompt", "timeout": 5 } ] }
+    ]
+  }
+}

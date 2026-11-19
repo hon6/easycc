@@ -1,0 +1,10 @@
+#!/bin/bash
+# 显示网络状态，并现场复查出口 IP 与直连封锁
+RUN=/run/cbox
+echo "状态：$(cat $RUN/state 2>/dev/null)"
+[ -f $RUN/status.env ] && sed 's/^/  /' $RUN/status.env
+now="$(curl -fsS --max-time 10 -x http://127.0.0.1:7890 https://ipinfo.io/ip 2>/dev/null)"
+echo "现在的出口 IP：${now:-获取失败}"
+t="$(curl -fsS --noproxy '*' --max-time 8 https://api.ipify.org 2>/dev/null)"
+echo "不带代理的请求出口：${t:-获取失败}（被防火墙透明转进 mihomo，应与上面一致）"
+command -v claude >/dev/null && echo "Claude Code：$(claude --version 2>/dev/null)" || echo "Claude Code：安装中或未安装（日志 $RUN/claude-install.log）"

@@ -1,0 +1,17 @@
+# 运行数据
+data/
+projects/
+.env
+dist/
+
+# 构建时下载的第三方安装包（体积大，按需用 tools/prefetch-vendor.sh 取）
+image/vendor/*
+!image/vendor/.keep
+
+# 服务端和发布脚本不在这个仓库里
+server/
+tools/publish-release.sh
+
+__pycache__/
+*.pyc
+.DS_Store

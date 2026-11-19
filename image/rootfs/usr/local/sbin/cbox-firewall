@@ -1,0 +1,120 @@
+#!/bin/bash
+# 防火墙：除 mihomo 用户连上游代理外，任何直连外网都不通；
+# 其余所有 TCP 透明转给 mihomo，DNS 转给 mihomo 的 DNS，其余 UDP / ICMP / IPv6 一律拒绝。
+# 联网闸门（CBOX_GATE）：装好时是关着的，环境里的程序（dev 等）连不上 mihomo、上不了网；
+# cbox-net 的关键检查全部通过后才打开，检查没通过 / 手动暂停时关上（已有连接也立即断开）。
+# 用法：cbox-firewall apply <代理IP> <代理端口> [允许直连的网段,逗号分隔]
+#       cbox-firewall check
+#       cbox-firewall gate open|close|status
+set -euo pipefail
+
+REDIR_PORT=7892
+DNS_PORT=1053
+WEB_PORT=6080
+SSH_PORT=22
+ADMIN_PORT=7681
+CHECKER_UID=65533   # gate.py 检查专用身份
+
+pick_backend() {
+  if iptables -w -t nat -L -n >/dev/null 2>&1 && iptables -w -L -n >/dev/null 2>&1; then return 0; fi
+  # 内核没有 nf_tables 时退回 legacy 后端
+  if command -v iptables-legacy >/dev/null; then
+    update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true
+    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy >/dev/null 2>&1 || true
+    iptables -w -t nat -L -n >/dev/null 2>&1 && return 0
+  fi
+  echo "[firewall] iptables 不可用：容器缺少 NET_ADMIN 权限或内核不支持 netfilter" >&2
+  return 1
+}
+
+apply_v4() {
+  local pip="$1" pport="$2" allow="${3:-}"
+  local uid; uid="$(id -u mihomo)"
+
+  iptables -w -F; iptables -w -X; iptables -w -t nat -F; iptables -w -t nat -X
+  iptables -w -P OUTPUT DROP
+  iptables -w -P INPUT DROP
+  iptables -w -P FORWARD DROP
+
+  # ---- 入站：只放回包、管理后台、noVNC 网页桌面和 SSH ----
+  iptables -w -A INPUT -i lo -j ACCEPT
+  iptables -w -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -w -A INPUT -p tcp --dport "$WEB_PORT" -j ACCEPT
+  iptables -w -A INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT
+  iptables -w -A INPUT -p tcp --dport "$ADMIN_PORT" -j ACCEPT
+  iptables -w -A INPUT -p tcp --dport 7682 -j ACCEPT   # 端口隧道（带令牌）
+
+  # ---- 出站（filter）----
+  iptables -w -N CBOX_GATE 2>/dev/null; iptables -w -A OUTPUT -j CBOX_GATE   # 联网闸门，必须排在最前
+  gate_close
+  iptables -w -A OUTPUT -o lo -j ACCEPT
+  iptables -w -N CBOX_HOST 2>/dev/null; iptables -w -A OUTPUT -j CBOX_HOST   # 访问本机（授权后才有规则）
+  # 透明转发改写成 127.0.0.1 的包，过滤链里仍记着原来的出口网卡（eth0），按目标地址放行
+  iptables -w -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+  iptables -w -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  # 唯一的出网通道：mihomo 进程 → 上游代理
+  iptables -w -A OUTPUT -m owner --uid-owner "$uid" -d "$pip" -p tcp --dport "$pport" -j ACCEPT
+  local cidr
+  for cidr in ${allow//,/ }; do
+    iptables -w -A OUTPUT -d "$cidr" -j ACCEPT
+  done
+  iptables -w -A OUTPUT -p tcp -j REJECT --reject-with tcp-reset
+  iptables -w -A OUTPUT -j REJECT --reject-with icmp-port-unreachable
+
+  # ---- 透明转发（nat）：不认代理环境变量的程序也只能走 mihomo ----
+  iptables -w -t nat -A OUTPUT -m owner --uid-owner "$uid" -j RETURN
+  iptables -w -t nat -N CBOX_HOST 2>/dev/null; iptables -w -t nat -A OUTPUT -j CBOX_HOST
+  # DNS 先接管：Docker 自定义网络的 DNS 是 127.0.0.11，必须排在 127/8 放行之前，否则查询会经宿主机泄漏
+  iptables -w -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+  iptables -w -t nat -A OUTPUT -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+  iptables -w -t nat -A OUTPUT -d 127.0.0.0/8 -j RETURN
+  for cidr in ${allow//,/ }; do
+    iptables -w -t nat -A OUTPUT -d "$cidr" -j RETURN
+  done
+  iptables -w -t nat -A OUTPUT -p tcp -j REDIRECT --to-ports "$REDIR_PORT"
+}
+
+apply_v6() {
+  if ip6tables -w -L -n >/dev/null 2>&1; then
+    ip6tables -w -F; ip6tables -w -X
+    ip6tables -w -P INPUT DROP; ip6tables -w -P FORWARD DROP; ip6tables -w -P OUTPUT DROP
+    ip6tables -w -A INPUT -i lo -j ACCEPT
+    ip6tables -w -A OUTPUT -o lo -j ACCEPT
+    return 0
+  fi
+  sysctl -qw net.ipv6.conf.all.disable_ipv6=1 2>/dev/null && return 0
+  # 两种办法都不行时：只要没有 IPv6 默认路由也算安全，否则拒绝启动
+  if ip -6 route show default 2>/dev/null | grep -q .; then
+    echo "[firewall] 无法封锁 IPv6，且存在 IPv6 默认路由，拒绝继续" >&2
+    return 1
+  fi
+}
+
+gate_close() {
+  iptables -w -F CBOX_GATE
+  iptables -w -A CBOX_GATE -m owner --uid-owner 0 -j RETURN
+  iptables -w -A CBOX_GATE -m owner --uid-owner "$CHECKER_UID" -j RETURN
+  # mihomo 的入口：代理端口 7890、透明转发 7892（透明转发的包在这里已经被改写成 127.0.0.1:7892）
+  iptables -w -A CBOX_GATE -d 127.0.0.0/8 -p tcp --dport 7890 -j REJECT --reject-with tcp-reset
+  iptables -w -A CBOX_GATE -d 127.0.0.0/8 -p tcp --dport "$REDIR_PORT" -j REJECT --reject-with tcp-reset
+}
+
+gate_open() { iptables -w -F CBOX_GATE; }
+
+gate_status() {
+  iptables -w -S CBOX_GATE >/dev/null 2>&1 || { echo missing; return 1; }
+  if iptables -w -S CBOX_GATE | grep -q REJECT; then echo closed; else echo open; fi
+}
+
+check() {
+  iptables -w -S OUTPUT | grep -q -- '-P OUTPUT DROP' || { echo "OUTPUT 默认策略不是 DROP"; return 1; }
+  iptables -w -t nat -S OUTPUT | grep -q -- "--to-ports $REDIR_PORT" || { echo "透明转发规则缺失"; return 1; }
+  echo ok
+}
+
+case "${1:-}" in
+  apply) shift; pick_backend; apply_v4 "$@"; apply_v6; check >/dev/null ;;
+  check) check ;;
+  gate) case "${2:-}" in open) gate_open ;; close) gate_close ;; status) gate_status ;; *) echo "用法: $0 gate open|close|status" >&2; exit 2 ;; esac ;;
+  *) echo "用法: $0 apply <代理IP> <端口> [直连网段] | check" >&2; exit 2 ;;
+esac

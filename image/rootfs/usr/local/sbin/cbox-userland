@@ -1,0 +1,97 @@
+#!/bin/bash
+# 用户侧服务（dev 用户）：桌面（TigerVNC + openbox）、Firefox、Kiteline
+# 环境不预装 AI agent：用户在环境后台「Agent」里挑选一键安装（/usr/local/lib/cbox/agents.py）
+# 用法：cbox-userland start | stop | restart-browser | reset <browser|claude|kiteline|all>
+set -uo pipefail
+RUN=/run/cbox
+H=/home/dev
+if [ -f /etc/cbox/config.env ]; then set -a; . /etc/cbox/config.env; set +a; fi
+SCREEN="${SCREEN:-1600x1000}"
+AUTOSTART_BROWSER="${AUTOSTART_BROWSER:-1}"
+LOG() { echo "[cbox-userland $(date '+%H:%M:%S')] $*"; }
+as_dev() { setsid runuser -u dev -- "$@" </dev/null & }
+# 用哪个浏览器写到 /run/cbox/browser（dev 读不到 /etc/cbox/config.env；镜像里没有 Chrome 就用 Firefox）
+set_engine() { local b=firefox; [ "${BROWSER:-}" = chrome ] && [ -x /usr/bin/google-chrome ] && b=chrome; echo "$b" > "$RUN/browser"; chmod 644 "$RUN/browser"; }
+kill_browsers() { pkill -u dev -f '/usr/lib/firefox/'; pkill -u dev -f '/opt/google/chrome/'; sleep 1; }
+
+start_desktop() {
+  pgrep -u dev -x Xtigervnc >/dev/null && return 0
+  local pw="${VNC_PASSWORD:-$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)}"
+  install -d -o dev -m 700 "$H/.vnc"
+  printf '%s\n' "$pw" | vncpasswd -f > "$H/.vnc/passwd"; chown dev "$H/.vnc/passwd"; chmod 600 "$H/.vnc/passwd"
+  rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+  as_dev Xtigervnc :1 -geometry "$SCREEN" -depth 24 -rfbport 5901 -localhost \
+    -rfbauth "$H/.vnc/passwd" -AlwaysShared -AcceptSetDesktopSize -dpi 96 >>"$RUN/vnc.log" 2>&1
+  for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X1 ] && break; sleep 0.2; done
+  as_dev env CBOX_AUTOSTART_BROWSER="$AUTOSTART_BROWSER" bash -lc 'exec dbus-launch --exit-with-session openbox-session' >>"$RUN/openbox.log" 2>&1
+  # 浏览器常驻（openbox 自启动之外再保一道；只会跑一份）
+  [ "$AUTOSTART_BROWSER" = 1 ] && { sleep 2; as_dev /usr/local/bin/cbox-browser-keeper; }
+}
+
+start_kiteline() {
+  [ -x /usr/local/bin/kiteline ] || return 0
+  pgrep -u dev -f 'python.* -m kiteline' >/dev/null && return 0
+  LOG "启动 Kiteline（无界面模式）"
+  as_dev bash -lc 'exec kiteline --headless' >>"$RUN/kiteline.log" 2>&1
+}
+
+start_agents() {
+  # 装过的 agent 程序不在了（从云端恢复到新电脑）：后台重新装，进度在环境后台「Agent」页
+  python3 -I -c 'import sys; sys.path.insert(0, "/usr/local/lib/cbox"); import agents; r = agents.ensure_wanted(); r and print("重新安装 agent:", " ".join(r))' 2>&1 | sed 's/^/[cbox-userland] /'
+}
+
+start_all() {
+  [ -f "$H/.profile" ] || cp -a --update=none /opt/dev-skel/. "$H/" 2>/dev/null || cp -an /opt/dev-skel/. "$H/"
+  chown dev "$H" 2>/dev/null || true
+  set_engine
+  start_desktop
+  start_kiteline
+  start_agents
+}
+
+stop_all() {
+  pkill -u dev 2>/dev/null
+  for _ in $(seq 1 25); do pgrep -u dev >/dev/null || return 0; sleep 0.2; done
+  pkill -9 -u dev 2>/dev/null; sleep 0.5
+}
+
+case "${1:-}" in
+  start) start_all ;;
+  restart-browser)
+    # 时区 / 语言 / 证书变了：保留数据，只关掉浏览器，常驻程序会马上重新打开它
+    # 守护循环也换一个新的（它启动 Firefox 时用的环境变量要是新的）
+    # 换了浏览器（Firefox ↔ Chrome）也走这里
+    set_engine
+    pkill -u dev -f /usr/local/bin/cbox-browser-keeper; kill_browsers
+    [ "$AUTOSTART_BROWSER" = 1 ] && as_dev /usr/local/bin/cbox-browser-keeper ;;
+  stop) stop_all ;;
+  reset)
+    case "${2:-}" in
+      browser)
+        kill_browsers
+        # 新版 Firefox 的配置在 ~/.config/mozilla，旧版在 ~/.mozilla；Chrome 在 ~/.config/google-chrome，都清
+        rm -rf "$H/.mozilla" "$H/.config/mozilla" "$H/.cache/mozilla" "$H/.config/google-chrome" "$H/.cache/google-chrome"
+        [ "$AUTOSTART_BROWSER" = 1 ] && as_dev /usr/local/bin/cbox-browser-keeper
+        LOG "浏览器数据已清空" ;;
+      claude)
+        pkill -u dev -x claude
+        rm -rf "$H/.claude" "$H/.claude.json" "$H/.claude.json.backup"
+        LOG "Claude Code 登录和本地数据已清空（程序保留）" ;;
+      agents)
+        pkill -u dev -x claude codex gemini qwen opencode copilot kimi cursor-agent 2>/dev/null
+        rm -rf "$H/.local/bin" "$H/.local/lib/node_modules" "$H/.local/share/claude" "$H/.local/share/uv" "$H/.local/share/cursor-agent" "$H/.config/easycc/default-agent" /run/cbox/agents
+        LOG "已卸载所有 agent" ;;
+      kiteline)
+        pkill -u dev -f 'python.* -m kiteline'; sleep 1
+        rm -rf "$H/.config/kiteline"
+        start_kiteline
+        LOG "Kiteline 配对和设置已清空，需要重新扫码" ;;
+      all)
+        stop_all
+        find "$H" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        start_all
+        LOG "用户目录已恢复初始状态（项目目录 /workspace 未动）" ;;
+      *) echo "用法: $0 reset <browser|claude|kiteline|all>" >&2; exit 2 ;;
+    esac ;;
+  *) echo "用法: $0 start | stop | reset <browser|claude|kiteline|all>" >&2; exit 2 ;;
+esac

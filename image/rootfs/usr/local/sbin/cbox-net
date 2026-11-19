@@ -1,0 +1,388 @@
+#!/bin/bash
+# 网络配置（root），可重复执行：启动时由 cbox-init 调，管理后台改代理时也调
+#   cbox-net apply            按当前配置装防火墙（闸门先关）、写 mihomo 配置并（重）启、按出口 IP 设时区 / 语言，
+#                             再做联网检查（gate.py），全部通过才放行外网。退出码：0 已放行，3 检查没通过（环境可用但不能上网），1 出错
+#   cbox-net recheck [--soft] [--rebase] 不重启，只重做联网检查（--soft：只是超时、没有明确违规时先不断网，退出码 4；
+#                             --rebase：以当前出口为新的地区基准）
+#   cbox-net pause | resume   手动暂停 / 恢复外网
+#   cbox-net test <代理URL>    临时放行这个代理，逐步实测（不改当前配置），输出 JSON
+#   cbox-net resolve <主机>    解析代理服务器域名（防火墙生效后经当前代理走 DoH 查真实 IP）
+set -uo pipefail
+RUN=/run/cbox
+CONF=/etc/cbox/config.env
+LOG() { echo "[cbox-net $(date '+%H:%M:%S')] $*" >&2; }
+FAIL() { echo "$*" >&2; exit 1; }
+mkdir -p "$RUN"
+
+load_conf() { if [ -f "$CONF" ]; then set -a; . "$CONF"; set +a; fi; }
+
+# 解析代理 URL → P_TYPE P_HOST P_PORT P_USER P_PASS
+parse_url() {
+  eval "$(python3 - "$1" <<'PY'
+import sys, shlex
+from urllib.parse import urlsplit, unquote
+try:
+    u = urlsplit(sys.argv[1]); port = u.port or 1080
+except ValueError as e:
+    sys.exit("代理地址格式不对：%s" % e)
+scheme = (u.scheme or "socks5").lower()
+if scheme in ("socks5h", "socks"): scheme = "socks5"
+if scheme == "https": scheme = "http"
+if scheme not in ("socks5", "http"): sys.exit("只支持 socks5:// 或 http:// 代理")
+for k, v in dict(P_TYPE=scheme, P_HOST=u.hostname or "", P_PORT=str(port),
+                 P_USER=unquote(u.username or ""), P_PASS=unquote(u.password or "")).items():
+    print(f"{k}={shlex.quote(v)}")
+PY
+)" || FAIL "代理地址格式不对：应为 socks5://用户名:密码@主机:端口"
+  [ -n "$P_HOST" ] || FAIL "代理地址里没有主机"
+}
+
+firewall_up() { iptables -w -S OUTPUT 2>/dev/null | grep -q -- '-P OUTPUT DROP'; }
+
+resolve() {
+  local h="$1" ip
+  if [[ "$h" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$h"; return 0; fi
+  if ! firewall_up; then
+    # 还没封网（容器刚启动）：直接解析
+    ip="$(getent ahostsv4 "$h" | awk 'NR==1{print $1}')"
+  else
+    # 已封网：系统 DNS 会被 mihomo 接成假 IP，改经当前代理用 DoH 查真实地址
+    ip="$(curl -fsS --max-time 10 -x http://127.0.0.1:7890 -H 'accept: application/dns-json' \
+          "https://1.1.1.1/dns-query?name=$h&type=A" 2>/dev/null | jq -r '[.Answer[]? | select(.type==1) | .data][0] // empty')"
+  fi
+  [ -n "$ip" ] || return 1
+  echo "$ip"
+}
+
+exit_ip() {
+  local u ip
+  for u in https://api4.ipify.org https://ipv4.icanhazip.com https://ipinfo.io/ip http://ip-api.com/line/?fields=query https://api.ipify.org https://ifconfig.me/ip; do
+    ip="$(curl -q -fsS --max-time 10 "$@" "$u" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$ip" =~ ^[0-9a-fA-F.:]+$ ]] && { echo "$ip"; return 0; }
+  done
+  return 1
+}
+
+cmd_test() {
+  parse_url "$1"
+  local ip; ip="$(resolve "$P_HOST")" || FAIL "无法解析代理服务器 ${P_HOST}（当前代理不通时请直接填 IP）"
+  local uid; uid="$(id -u mihomo)"
+  # 临时放行 mihomo → 新代理，测完删掉
+  iptables -w -I OUTPUT 1 -m owner --uid-owner "$uid" -d "$ip" -p tcp --dport "$P_PORT" -j ACCEPT
+  jq -n --arg t "$P_TYPE" --arg ip "$ip" --arg port "$P_PORT" --arg u "$P_USER" --arg pw "$P_PASS" \
+    '{type:$t, ip:$ip, port:($port|tonumber), user:$u, pass:$pw}' \
+    | setpriv --reuid mihomo --regid mihomo --init-groups python3 -I /usr/local/lib/cbox/probe.py
+  iptables -w -D OUTPUT -m owner --uid-owner "$uid" -d "$ip" -p tcp --dport "$P_PORT" -j ACCEPT
+}
+
+write_mihomo() {
+  local secret
+  secret="$(grep -m1 '^secret:' /etc/mihomo/config.yaml 2>/dev/null | awk '{print $2}')"
+  [ -n "$secret" ] || secret="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+  q() { python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"; }
+  {
+    cat <<EOF
+mixed-port: 7890
+redir-port: 7892
+external-controller: 127.0.0.1:9090
+secret: $secret
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+unified-delay: true
+geodata-mode: false
+geo-auto-update: false
+find-process-mode: off
+profile: { store-selected: false, store-fake-ip: false }
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  sniff:
+    HTTP: { ports: [80, 8080-8880], override-destination: true }
+    TLS: { ports: [443, 8443] }
+dns:
+  enable: true
+  listen: 127.0.0.1:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter: ['+.local', 'localhost']
+  # DNS 也经代理出去，不在本地泄漏查询
+  nameserver: ['https://1.1.1.1/dns-query#exit', 'https://8.8.8.8/dns-query#exit']
+proxies:
+  - name: exit
+    type: $P_TYPE
+    server: $P_IP
+    port: $P_PORT
+EOF
+    [ -n "$P_USER" ] && echo "    username: $(q "$P_USER")"
+    [ -n "$P_PASS" ] && echo "    password: $(q "$P_PASS")"
+    [ "$P_TYPE" = socks5 ] && echo "    udp: false"
+    # 链式代理：先连中转，再经中转连落地（exit）；域名交给落地节点解析
+    if [ -n "${R_IP:-}" ]; then
+      echo "    dialer-proxy: relay"
+      printf '  - name: relay\n    type: %s\n    server: %s\n    port: %s\n' "$R_TYPE" "$R_IP" "$R_PORT"
+      [ -n "$R_USER" ] && echo "    username: $(q "$R_USER")"
+      [ -n "$R_PASS" ] && echo "    password: $(q "$R_PASS")"
+      [ "$R_TYPE" = socks5 ] && echo "    udp: false"
+    fi
+    printf 'rules:\n  - MATCH,exit\n'
+  } > /etc/mihomo/config.yaml
+  chown -R mihomo:mihomo /etc/mihomo; chmod 600 /etc/mihomo/config.yaml
+  # 「测试连通」直接握手的是第一跳（有中转时是中转）
+  if [ -n "${R_IP:-}" ]; then
+    jq -n --arg t "$R_TYPE" --arg h "$R_HOST" --arg ip "$R_IP" --arg port "$R_PORT" --arg u "$R_USER" --arg pw "$R_PASS" \
+      '{type:$t, host:$h, ip:$ip, port:($port|tonumber), user:$u, pass:$pw, relay:true}' > "$RUN/proxy.json"
+  else
+    jq -n --arg t "$P_TYPE" --arg h "$P_HOST" --arg ip "$P_IP" --arg port "$P_PORT" --arg u "$P_USER" --arg pw "$P_PASS" \
+      '{type:$t, host:$h, ip:$ip, port:($port|tonumber), user:$u, pass:$pw}' > "$RUN/proxy.json"
+  fi
+  chmod 600 "$RUN/proxy.json"
+}
+
+restart_mihomo() {
+  rm -f "$RUN/killswitch"
+  if pgrep -f /usr/local/sbin/cbox-mihomo >/dev/null; then pkill -x mihomo
+  else setsid /usr/local/sbin/cbox-mihomo </dev/null >/dev/null 2>&1 9>&- & fi   # 9>&-：常驻进程别带走网络操作锁
+  sleep 0.5
+  for _ in $(seq 1 50); do nc -z 127.0.0.1 7890 2>/dev/null && return 0; sleep 0.2; done
+  return 1
+}
+
+cmd_apply() {
+  load_conf
+  [ -n "${PROXY_URL:-}" ] || FAIL "没有设置 PROXY_URL，例如 socks5://用户名:密码@1.2.3.4:1080"
+  R_IP="" R_TYPE="" R_HOST="" R_PORT="" R_USER="" R_PASS=""
+  if [ -n "${RELAY_URL:-}" ]; then          # 链式代理的中转（第一跳）
+    parse_url "$RELAY_URL"
+    R_TYPE="$P_TYPE" R_HOST="$P_HOST" R_PORT="$P_PORT" R_USER="$P_USER" R_PASS="$P_PASS"
+    R_IP="$(resolve "$R_HOST")" || FAIL "无法解析中转代理服务器 ${R_HOST}"
+  fi
+  parse_url "$PROXY_URL"
+  P_IP="$(resolve "$P_HOST")" || FAIL "无法解析代理服务器 $P_HOST"
+  local FW_IP="$P_IP" FW_PORT="$P_PORT"
+  if [ -n "$R_IP" ]; then
+    FW_IP="$R_IP" FW_PORT="$R_PORT"         # mihomo 只直连中转，落地节点经中转连
+    LOG "链式代理：中转 $R_TYPE $R_IP:$R_PORT → 落地 $P_TYPE $P_IP:$P_PORT"
+  else
+    LOG "上游代理：$P_TYPE $P_IP:$P_PORT"
+  fi
+
+  /usr/local/sbin/cbox-firewall apply "$FW_IP" "$FW_PORT" "${ALLOW_DIRECT_CIDRS:-}" \
+    || FAIL "防火墙没装上。请确认容器带 --cap-add NET_ADMIN 启动"
+  LOG "防火墙已生效：直连外网全部拒绝，外网闸门关闭，检查通过后放行"
+
+  write_mihomo
+  restart_mihomo || FAIL "mihomo 没起来：$(tail -5 "$RUN/mihomo.log" 2>/dev/null)"
+
+  # 出口和地区：查不到不算致命错误，闸门保持关闭、环境照常可用，cbox-init 会自动重试
+  local PX=(-x http://127.0.0.1:7890) IP_PROXY GEO TZ_GEO CC LOC_DESC TZ_FINAL AL TZ_OLD
+  IP_PROXY="$(exit_ip "${PX[@]}")" || { IP_PROXY=""; LOG "经代理访问外网失败，请检查代理是否可用。mihomo 日志：$(tail -3 "$RUN/mihomo.log" 2>/dev/null)"; }
+  [ -n "$IP_PROXY" ] && LOG "出口 IP：${IP_PROXY}"
+
+  # ---- 按出口 IP 设时区和语言 ----
+  GEO="" TZ_GEO="" CC="" LOC_DESC=""
+  local try
+  for try in 1 2 3; do
+    [ -n "$IP_PROXY" ] || break
+    GEO="$(curl -fsS --max-time 12 "${PX[@]}" "https://ipinfo.io/$IP_PROXY/json" 2>/dev/null)"
+    CC="$(jq -r '.country // empty' <<<"$GEO" 2>/dev/null)"
+    if [ -n "$CC" ]; then
+      TZ_GEO="$(jq -r '.timezone // empty' <<<"$GEO")"
+      LOC_DESC="$(jq -r '[.city,.region,.country]|map(select(.!=null and .!=""))|join(", ")' <<<"$GEO")"
+      jq -c --arg ip "$IP_PROXY" '{ip:$ip, cc:(.country|ascii_upcase), region:(.region//""), city:(.city//""), tz:(.timezone//""), src:"ipinfo", at:now}' <<<"$GEO" > "$RUN/geo.json"
+      break
+    fi
+    GEO="$(curl -fsS --max-time 12 "${PX[@]}" "http://ip-api.com/json/$IP_PROXY?fields=countryCode,regionName,timezone,city,country" 2>/dev/null)"
+    CC="$(jq -r '.countryCode // empty' <<<"$GEO" 2>/dev/null)"
+    if [ -n "$CC" ]; then
+      TZ_GEO="$(jq -r '.timezone // empty' <<<"$GEO")"
+      LOC_DESC="$(jq -r '[.city,.regionName,.country]|map(select(.!=null and .!=""))|join(", ")' <<<"$GEO")"
+      jq -c --arg ip "$IP_PROXY" '{ip:$ip, cc:(.countryCode|ascii_upcase), region:(.regionName//""), city:(.city//""), tz:(.timezone//""), src:"ip-api", at:now}' <<<"$GEO" > "$RUN/geo.json"
+      break
+    fi
+    sleep 2
+  done
+  [ -n "$IP_PROXY" ] && [ -z "$CC" ] && LOG "查不到出口所在地区（定位服务经代理访问失败），时区先保持不变"
+  TZ_OLD="$(cat /etc/timezone 2>/dev/null)"; AL_OLD="$(sed -n "s/^ACCEPT_LANGUAGE='\(.*\)'$/\1/p" "$RUN/status.env" 2>/dev/null)"
+  TZ_FINAL="${TZ_OVERRIDE:-${TZ_GEO:-${TZ_OLD:-UTC}}}"   # 查不到就保持原来的，联网检查会因「时区无法确认」先关着
+  [ -f "/usr/share/zoneinfo/$TZ_FINAL" ] || TZ_FINAL=UTC
+  ln -sf "/usr/share/zoneinfo/$TZ_FINAL" /etc/localtime; echo "$TZ_FINAL" > /etc/timezone
+  case "$CC" in
+    US) AL="en-US, en" ;;           GB) AL="en-GB, en" ;;         CA) AL="en-CA, en-US, en, fr-CA" ;;
+    AU) AL="en-AU, en" ;;           NZ) AL="en-NZ, en" ;;         IE) AL="en-IE, en" ;;
+    SG) AL="en-SG, en, zh-SG" ;;    IN) AL="en-IN, en, hi" ;;     JP) AL="ja-JP, ja, en-US, en" ;;
+    KR) AL="ko-KR, ko, en-US, en" ;; HK) AL="zh-HK, zh, en" ;;    TW) AL="zh-TW, zh, en" ;;
+    DE|AT) AL="de-DE, de, en-US, en" ;; CH) AL="de-CH, de, fr, en" ;; FR) AL="fr-FR, fr, en-US, en" ;;
+    NL) AL="nl-NL, nl, en-US, en" ;; ES) AL="es-ES, es, en" ;;    IT) AL="it-IT, it, en" ;;
+    BR) AL="pt-BR, pt, en" ;;       *) AL="en-US, en" ;;
+  esac
+  [ -z "$CC" ] && [ -n "$AL_OLD" ] && AL="$AL_OLD"   # 查不到国家：语言也保持原来的
+  AL="${ACCEPT_LANGUAGE:-$AL}"
+  LOG "时区：$TZ_FINAL  语言：$AL  位置：${LOC_DESC:-未知}"
+
+  cat > /etc/profile.d/cbox-env.sh <<EOF
+export TZ='$TZ_FINAL'
+export http_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890 all_proxy=socks5h://127.0.0.1:7890
+export HTTP_PROXY=\$http_proxy HTTPS_PROXY=\$https_proxy ALL_PROXY=\$all_proxy
+export no_proxy=localhost,127.0.0.1,::1,host.internal,host.docker.internal NO_PROXY=localhost,127.0.0.1,::1,host.internal,host.docker.internal
+# Node / Python 也认系统证书库（含导入的本地证书）
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export DISPLAY=:1 BROWSER=/usr/local/bin/cbox-browser
+export PATH="\$HOME/.local/bin:\$PATH"
+EOF
+  grep -q cbox-env /etc/bash.bashrc || echo '[ -f /etc/profile.d/cbox-env.sh ] && . /etc/profile.d/cbox-env.sh' >> /etc/bash.bashrc
+
+  # Firefox 策略：锁定走代理（远程 DNS）、关 WebRTC / DoH / 定位 / 遥测，语言跟出口国家
+  local POL d
+  POL="$(jq -n --arg al "$AL" '{policies:{
+    DisableAppUpdate:true, DisableTelemetry:true, DisableFirefoxStudies:true, DontCheckDefaultBrowser:true,
+    SkipTermsOfUse:true, NoDefaultBookmarks:true, RequestedLocales:"en-US", UserMessaging:{WhatsNew:false, ExtensionRecommendations:false, FeatureRecommendations:false, UrlbarInterventions:false, SkipOnboarding:true, MoreFromMozilla:false, FirefoxLabs:false, Locked:true},
+    OverrideFirstRunPage:"", OverridePostUpdatePage:"",
+    Homepage:{URL:"file:///run/cbox/status.html", StartPage:"previous-session", Locked:false},
+    DNSOverHTTPS:{Enabled:false, Locked:true},
+    Proxy:{Mode:"manual", Locked:true, SOCKSProxy:"127.0.0.1:7890", SOCKSVersion:5, UseProxyForDNS:true, Passthrough:"localhost, 127.0.0.1, host.internal, host.docker.internal"},
+    Preferences:{
+      "media.peerconnection.enabled":{Value:false, Status:"locked"},
+      "geo.enabled":{Value:false, Status:"locked"},
+      "intl.accept_languages":{Value:$al, Status:"locked"},
+      "privacy.resistFingerprinting":{Value:false, Status:"locked"},
+      "network.trr.mode":{Value:5, Status:"locked"},
+      "network.dns.disablePrefetch":{Value:true, Status:"locked"},
+      "browser.shell.checkDefaultBrowser":{Value:false, Status:"locked"},
+      "browser.startup.page":{Value:3, Status:"locked"},
+      "browser.sessionstore.resume_from_crash":{Value:true, Status:"locked"},
+      "browser.sessionstore.max_resumed_crashes":{Value:999999, Status:"locked"},
+      "browser.sessionstore.interval":{Value:5000, Status:"locked"},
+      "browser.sessionstore.warnOnQuit":{Value:false, Status:"locked"},
+      "browser.tabs.closeWindowWithLastTab":{Value:false, Status:"locked"},
+      "browser.quitShortcut.disabled":{Value:true, Status:"locked"},
+      "browser.aboutwelcome.enabled":{Value:false, Status:"locked"},
+      "browser.startup.couldRestoreSession.count":{Value:2, Status:"locked"},
+      "browser.translations.automaticallyPopup":{Value:false, Status:"locked"},
+      "datareporting.policy.dataSubmissionPolicyBypassNotification":{Value:true, Status:"locked"}
+    }}}')"
+  for d in /etc/firefox/policies /usr/lib/firefox/distribution; do mkdir -p "$d"; echo "$POL" > "$d/policies.json"; done
+  # Chrome 策略（和 Firefox 同样的保护）：锁定走代理（SOCKS5 远程解析域名）、WebRTC 只走代理（不走 UDP 直连）、
+  # 关 DoH / QUIC / 定位 / 遥测 / 登录同步，语言跟出口国家（界面固定英文，启动参数 --lang=en-US）
+  local CPOL
+  CPOL="$(jq -n --arg al "$AL" '{
+    ProxySettings:{ProxyMode:"fixed_servers", ProxyServer:"socks5://127.0.0.1:7890", ProxyBypassList:"localhost;127.0.0.1;host.internal;host.docker.internal"},
+    WebRtcIPHandling:"disable_non_proxied_udp", QuicAllowed:false, DnsOverHttpsMode:"off",
+    DefaultGeolocationSetting:2, MetricsReportingEnabled:false, BrowserSignin:0, SyncDisabled:true,
+    PromotionalTabsEnabled:false, DefaultBrowserSettingEnabled:false, BackgroundModeEnabled:false,
+    TranslateEnabled:false, RestoreOnStartup:1, HardwareAccelerationModeEnabled:false,
+    ForcedLanguages:($al | split(",") | map(gsub("^ +| +$";"") | sub(";.*$";"")) | map(select(length>0)))
+  }')"
+  mkdir -p /etc/opt/chrome/policies/managed; echo "$CPOL" > /etc/opt/chrome/policies/managed/easycc.json
+
+  local started; started="$(grep -m1 '^STARTED=' "$RUN/status.env" 2>/dev/null | cut -d= -f2-)"
+  cat > "$RUN/status.env" <<EOF
+EXIT_IP=$IP_PROXY
+LOCATION='$LOC_DESC'
+COUNTRY=$CC
+TIMEZONE=$TZ_FINAL
+ACCEPT_LANGUAGE='$AL'
+PROXY='${R_IP:+$R_TYPE://$R_IP:$R_PORT → }$P_TYPE://$P_IP:$P_PORT'
+STARTED=${started:-'$(date '+%F %T %Z')'}
+APPLIED='$(date '+%F %T %Z')'
+EOF
+  local FLAG=""; [ ${#CC} = 2 ] && FLAG="$(python3 -c 'import sys; print("".join(chr(127397 + ord(c)) for c in sys.argv[1].upper()))' "$CC" 2>/dev/null)"
+  cat > "$RUN/status.html" <<EOF
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Network Status</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;min-height:100%}
+body{font:15px/1.6 -apple-system,system-ui,"DejaVu Sans",sans-serif;color:#eef3fa;display:flex;align-items:center;justify-content:center;min-height:100vh;
+ background:radial-gradient(900px 520px at 8% -8%,rgba(92,207,230,.18),transparent 60%),radial-gradient(800px 600px at 105% 10%,rgba(122,108,255,.18),transparent 60%),
+ radial-gradient(900px 600px at 60% 120%,rgba(56,120,255,.14),transparent 60%),#0a0d16}
+.card{width:min(560px,92vw);padding:30px 32px;border-radius:24px;border:1px solid rgba(255,255,255,.14);
+ background:linear-gradient(180deg,rgba(255,255,255,.09),rgba(255,255,255,.035));backdrop-filter:blur(30px) saturate(180%);
+ box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 20px 60px -20px rgba(0,0,0,.6)}
+.k{font-size:12px;color:rgba(235,242,250,.55);letter-spacing:.5px}
+.ip{font:700 34px/1.2 ui-monospace,Menlo,"DejaVu Sans Mono",monospace;margin:4px 0 2px}
+.loc{color:rgba(235,242,250,.7)}
+.grid{display:grid;grid-template-columns:90px 1fr;gap:8px 12px;margin:22px 0 20px;font-size:14px}.grid>div:nth-child(odd){color:rgba(235,242,250,.55)}
+.ok{display:inline-block;padding:1px 10px;border-radius:99px;color:#4ade80;background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.3);font-size:13px}
+.links{display:flex;gap:8px;flex-wrap:wrap}
+.links a{color:#fff;text-decoration:none;padding:7px 14px;border-radius:11px;border:1px solid rgba(255,255,255,.14);
+ background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.05));box-shadow:inset 0 1px 0 rgba(255,255,255,.18);font-size:13.5px}
+.links a:hover{background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.08))}
+.brand{display:flex;align-items:center;gap:8px;margin-bottom:18px;font-weight:650}.brand small{color:rgba(235,242,250,.5);font-weight:400}
+</style>
+<div class="card">
+ <div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5ccfe6" stroke-width="1.6"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M12 7v10M7.5 9.5 12 12l4.5-2.5" opacity=".7"/></svg>Network Status</div>
+ <div class="k">EXIT IP</div><div class="ip">$FLAG $IP_PROXY</div><div class="loc">${LOC_DESC:-Unknown location}</div>
+ <div class="grid"><div>Time zone</div><div>${TZ_FINAL}</div><div>Languages</div><div>$AL</div>
+  <div>Direct</div><div><span class="ok">Blocked</span>&nbsp; all traffic via ${R_IP:+relay → }$P_TYPE proxy</div></div>
+ <div class="links"><a href="https://claude.ai">claude.ai</a><a href="https://ipinfo.io">ipinfo.io</a><a href="https://browserleaks.com/ip">BrowserLeaks</a><a href="https://whoer.net">Whoer</a></div>
+</div>
+EOF
+  chmod 644 "$RUN"/status.*
+  /usr/local/sbin/cbox-hostaccess sync >&2 9>&- || true
+  # 时区 / 语言变了：正在运行的浏览器重开一次（会话恢复，标签页还在），否则它还按旧的
+  local FFP FF_TZ=""
+  FFP="$(pgrep -o -u dev -f '/usr/lib/firefox/firefox-bin|/opt/google/chrome/chrome( |$)')"
+  [ -n "$FFP" ] && FF_TZ="$(runuser -u dev -- sh -c "tr '\\0' '\\n' < /proc/$FFP/environ" 2>/dev/null | sed -n 's/^TZ=//p')"
+  if [ -n "$FFP" ] && { [ "$TZ_OLD" != "$TZ_FINAL" ] || [ "$AL_OLD" != "$AL" ] || [ "${FF_TZ:-$TZ_FINAL}" != "$TZ_FINAL" ]; }; then
+    LOG "时区 / 语言变了，重开环境里的浏览器"; /usr/local/sbin/cbox-userland restart-browser >/dev/null 2>&1 9>&- || true
+    echo "BROWSER_RESTARTED=1" >> "$RUN/status.env"
+  fi
+  grep -q '^KILLSWITCH\|^FAILED' "$RUN/state" 2>/dev/null && echo running > "$RUN/state"
+  gate_run
+}
+
+# ---- 联网闸门：关键项全部通过才打开；失败 / 拿不到证据就关着（退出码 3）----
+gate_run() {
+  local out rc
+  if [ -f "$RUN/paused" ]; then
+    /usr/local/sbin/cbox-firewall gate close
+    LOG "外网已手动暂停（恢复：管理后台「恢复外网」或 cbox-net resume）"; echo "PAUSED"; return 3
+  fi
+  local soft=0; [ "${1:-}" = --soft ] && { soft=1; shift; }
+  out="$(python3 -I /usr/local/lib/cbox/gate.py "$@")"; rc=$?
+  # --soft（放行中的定期复查）：只是没拿到证据（超时）、没有明确违规时先不断网，由 cbox-init 连续几次再决定
+  if [ $rc = 3 ] && [ $soft = 1 ] && ! jq -e '.checks[]|select(.state=="failed")' <<<"$out" >/dev/null 2>&1; then
+    LOG "复查没拿到全部证据（多半是超时）：$(jq -r '.reason // empty' <<<"$out")，暂不断网"
+    echo "SOFT"; return 4
+  fi
+  if [ $rc = 0 ]; then
+    /usr/local/sbin/cbox-firewall gate open
+    LOG "联网检查全部通过，外网已放行"
+    echo "OK $(jq -r .exitIP <<<"$out" 2>/dev/null)"; return 0
+  fi
+  /usr/local/sbin/cbox-firewall gate close
+  LOG "联网检查未通过，外网保持关闭：$(jq -r '.reason // empty' <<<"$out" 2>/dev/null || echo "$out" | tail -1)"
+  echo "BLOCKED"; return 3
+}
+
+cmd_recheck() { firewall_up || FAIL "防火墙不在，需要先 cbox-net apply"; gate_run "$@"; }
+
+cmd_pause() {
+  touch "$RUN/paused"; /usr/local/sbin/cbox-firewall gate close
+  python3 - "$RUN/gate.json" <<'PY'
+import json, sys, time
+p = sys.argv[1]
+try: g = json.load(open(p))
+except Exception: g = {"checks": []}
+g.update(open=False, paused=True, reason="外网已手动暂停", checkedAt=time.strftime("%F %T"))
+json.dump(g, open(p, "w"), ensure_ascii=False)
+PY
+  LOG "外网已暂停：已有连接已断开，终端、文件和本地服务照常可用"; echo PAUSED
+}
+
+cmd_resume() { rm -f "$RUN/paused"; cmd_apply; }
+
+# 应用 / 检查 / 暂停互斥（cbox-init 的自动重试和管理后台可能同时调）
+case "${1:-}" in apply|recheck|pause|resume) exec 9>"$RUN/net.lock"; flock -w 180 9 || FAIL "另一个网络操作还在进行" ;; esac
+case "${1:-}" in
+  apply) cmd_apply ;;
+  recheck) shift; cmd_recheck "$@" ;;
+  pause) cmd_pause ;;
+  resume) cmd_resume ;;
+  test) [ -n "${2:-}" ] || FAIL "用法: cbox-net test <代理URL>"; cmd_test "$2" ;;
+  resolve) resolve "${2:?主机}" || FAIL "无法解析 $2" ;;
+  *) echo "用法: cbox-net apply | recheck [--rebase] | pause | resume | test <代理URL> | resolve <主机>" >&2; exit 2 ;;
+esac

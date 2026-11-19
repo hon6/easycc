@@ -1,0 +1,8 @@
+#!/bin/bash
+# mihomo 守护：退出就重启；有 killswitch 标记（出口 IP 不符）时停止，保持断网
+RUN=/run/cbox
+while [ ! -f "$RUN/killswitch" ]; do
+  setpriv --reuid mihomo --regid mihomo --init-groups /usr/local/bin/mihomo -d /etc/mihomo >>"$RUN/mihomo.log" 2>&1
+  [ -f "$RUN/killswitch" ] && break
+  echo "[cbox-mihomo $(date '+%H:%M:%S')] mihomo 退出，2 秒后重启" >>"$RUN/mihomo.log"; sleep 2
+done

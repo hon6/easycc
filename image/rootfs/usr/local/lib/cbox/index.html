@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>easyCC 控制台</title>
+<style>
+:root{
+  --bg:#05080f;--bg2:#0a101c;--panel:rgba(28,28,30,.78);--line:rgba(255,255,255,.115);--line2:rgba(255,255,255,.23);
+  --fg:#ececf0;--mute:#8e8e93;--dim:#5a5a60;
+  --cyan:#f2f3f5;--green:#34d399;--amber:#fbbf24;--red:#f87171;--violet:#e3e4e8;--blue:#cfd2d8;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,"JetBrains Mono","Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;min-height:100vh;
+  background:
+    radial-gradient(1200px 600px at 15% -10%,rgba(255,255,255,.072),transparent 60%),
+    radial-gradient(900px 500px at 100% 0%,rgba(255,255,255,.058),transparent 60%),
+    linear-gradient(rgba(255,255,255,.032) 1px,transparent 1px) 0 0/44px 44px,
+    linear-gradient(90deg,rgba(255,255,255,.032) 1px,transparent 1px) 0 0/44px 44px,var(--bg)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+.mono{font-family:var(--mono)}
+.wrap{max-width:1180px;margin:auto;padding:0 20px}
+/* ---- 顶栏 ---- */
+.top{position:sticky;top:0;z-index:10;backdrop-filter:blur(12px);background:rgba(14,14,16,.72);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:14px;height:60px}
+.logo{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:700;letter-spacing:2px;font-size:15px}
+.logo svg{filter:drop-shadow(0 0 6px rgba(255,255,255,.4))}
+.inst{font-family:var(--mono);font-size:12px;color:var(--cyan);border:1px solid var(--line2);padding:2px 8px;border-radius:4px;background:rgba(255,255,255,.043)}
+.spacer{flex:1}
+.chip{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;letter-spacing:.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--line2)}
+.pulse{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 0 currentColor;animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.c-ok{color:var(--green)}.c-warn{color:var(--amber)}.c-bad{color:var(--red)}.c-info{color:var(--cyan)}.c-mute{color:var(--mute)}
+.clock{font-family:var(--mono);font-size:12px;color:var(--mute);text-align:right;line-height:1.3}
+.clock b{color:var(--fg);font-weight:600;font-size:13px}
+/* ---- 链路图 ---- */
+.path{display:grid;grid-template-columns:repeat(9,auto);align-items:center;gap:0;margin:22px 0 6px;overflow-x:auto;padding-bottom:6px}
+.node{min-width:128px;padding:10px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--panel);position:relative}
+.node .k{font-size:11px;color:var(--mute);letter-spacing:1px}
+.node .v{font-family:var(--mono);font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+.node.ok{border-color:rgba(52,211,153,.45);box-shadow:0 0 18px -6px rgba(52,211,153,.45)}
+.node.bad{border-color:rgba(248,113,113,.55);box-shadow:0 0 18px -6px rgba(248,113,113,.5)}
+.node.exit{border-color:rgba(255,255,255,.4);box-shadow:0 0 24px -6px rgba(255,255,255,.396)}
+.link{height:2px;min-width:34px;margin:0 2px;background:repeating-linear-gradient(90deg,var(--cyan) 0 8px,transparent 8px 14px);background-size:28px 2px;animation:flow 1s linear infinite;opacity:.8}
+.link.off{background:repeating-linear-gradient(90deg,var(--red) 0 4px,transparent 4px 10px);animation:none;opacity:.6}
+@keyframes flow{to{background-position:28px 0}}
+/* ---- 标签页 ---- */
+.tabs{display:flex;gap:4px;margin:18px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{font:inherit;background:none;border:0;color:var(--mute);padding:10px 16px;cursor:pointer;position:relative;white-space:nowrap;letter-spacing:.5px}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--cyan)}
+.tab.on::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+.page{display:none;animation:fade .25s ease}.page.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* ---- 面板 ---- */
+.grid{display:grid;gap:16px;grid-template-columns:repeat(12,minmax(0,1fr))}
+.s4{grid-column:span 4}.s5{grid-column:span 5}.s6{grid-column:span 6}.s7{grid-column:span 7}.s8{grid-column:span 8}.s12{grid-column:span 12}
+@media (max-width:900px){.s4,.s5,.s6,.s7,.s8{grid-column:span 12}}
+.panel{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;backdrop-filter:blur(6px)}
+.panel::before,.panel::after{content:"";position:absolute;width:14px;height:14px;border-color:var(--cyan);border-style:solid;opacity:.7;pointer-events:none}
+.panel::before{top:-1px;left:-1px;border-width:2px 0 0 2px;border-top-left-radius:12px}
+.panel::after{bottom:-1px;right:-1px;border-width:0 2px 2px 0;border-bottom-right-radius:12px}
+.ph{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.ph h3{margin:0;font-size:13px;font-weight:600;letter-spacing:2px;color:var(--mute);text-transform:uppercase}
+.ph h3 b{color:var(--fg);letter-spacing:.5px;text-transform:none;font-size:15px;margin-left:6px}
+.tag{font-family:var(--mono);font-size:11px;padding:1px 8px;border-radius:4px;border:1px solid currentColor;letter-spacing:.5px}
+.hint{color:var(--mute);font-size:12.5px}
+.ip{font-family:var(--mono);font-size:40px;font-weight:700;letter-spacing:1px;line-height:1.15;
+  background:linear-gradient(90deg,#ffffff,var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 30px rgba(255,255,255,.18);word-break:break-all}
+.kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:6px 12px;margin-top:14px;font-size:13px}
+.kv>div:nth-child(odd){color:var(--mute)}.kv>div:nth-child(even){font-family:var(--mono);overflow-wrap:anywhere}
+/* ---- 按钮 / 表单 ---- */
+.btn{font:inherit;font-size:13px;cursor:pointer;color:var(--fg);background:rgba(255,255,255,.045);border:1px solid var(--line2);padding:7px 14px;border-radius:8px;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 14px -4px var(--cyan)}
+.btn.pri{background:linear-gradient(180deg,rgba(255,255,255,.158),rgba(255,255,255,.058));border-color:rgba(255,255,255,.4);color:#ffffff}
+.btn.danger{border-color:rgba(248,113,113,.45);color:var(--red)}.btn.danger:hover{box-shadow:0 0 14px -4px var(--red)}
+.btn:disabled{opacity:.45;cursor:wait;box-shadow:none}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
+label.f{display:block;font-size:12px;color:var(--mute);margin:12px 0 5px;letter-spacing:.5px}
+.in{width:100%;font:13px var(--mono);color:var(--fg);background:rgba(12,12,14,.7);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;outline:none;transition:.15s}
+.in:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(255,255,255,.086)}
+.fgrid{display:grid;grid-template-columns:1.6fr 1fr;gap:0 12px}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.seg button{font:12px var(--mono);background:none;border:0;color:var(--mute);padding:8px 14px;cursor:pointer}
+.seg button.on{background:rgba(255,255,255,.115);color:var(--cyan)}
+details{margin-top:12px;border-top:1px dashed var(--line);padding-top:8px}
+summary{cursor:pointer;color:var(--mute);font-size:12.5px}
+/* ---- 列表 / 时间线 ---- */
+.checks{list-style:none;padding:0;margin:0}
+.checks li{display:grid;grid-template-columns:18px 104px minmax(0,1fr);gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
+.checks li:first-child{border-top:0}
+.dot{width:9px;height:9px;border-radius:50%;margin-top:6px}
+.d-pass{background:var(--green);box-shadow:0 0 8px var(--green)}.d-warn{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.d-fail{background:var(--red);box-shadow:0 0 8px var(--red)}.d-info{background:var(--blue);box-shadow:0 0 8px var(--blue)}.d-idle{background:var(--dim)}
+.tl{list-style:none;margin:0;padding:0 0 0 6px}
+.tl li{position:relative;padding:0 0 14px 22px;border-left:1px solid var(--line2);font-size:13px}
+.tl li:last-child{border-left-color:transparent}
+.tl li::before{content:"";position:absolute;left:-6px;top:3px;width:11px;height:11px;border-radius:50%;background:var(--bg);border:2px solid var(--dim)}
+.tl li.ok::before{border-color:var(--green);box-shadow:0 0 8px var(--green)}
+.tl li.bad::before{border-color:var(--red);box-shadow:0 0 8px var(--red)}
+.tl .t{display:flex;justify-content:space-between;gap:10px}.tl .ms{font-family:var(--mono);color:var(--mute);font-size:12px}
+/* ---- 评分环 ---- */
+.score{display:flex;gap:18px;align-items:center}
+.ring{width:118px;height:118px;flex:none;position:relative}
+.ring svg{transform:rotate(-90deg)}
+.ring .n{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono)}
+.ring .n b{font-size:26px;line-height:1}.ring .n span{font-size:11px;color:var(--mute);margin-top:4px}
+/* ---- 命令 ---- */
+.cmd{display:flex;align-items:center;gap:8px;font:12.5px var(--mono);background:rgba(12,12,14,.75);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0;cursor:copy;overflow-wrap:anywhere}
+.cmd::before{content:"$";color:var(--cyan)}
+.cmd:hover{border-color:var(--line2)}
+.qa{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.qa h4{margin:0 0 4px;font-size:14px}
+/* ---- 项目浏览 ---- */
+.crumb{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-family:var(--mono);font-size:13px}
+.crumb a{color:var(--cyan);cursor:pointer}.crumb span{color:var(--dim)}
+.dirs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:14px}
+.dir{border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:rgba(12,12,14,.45);cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:flex-start}
+.dir:hover{border-color:var(--cyan);box-shadow:0 0 16px -6px var(--cyan)}
+.dir.cur{border-color:rgba(52,211,153,.6);box-shadow:0 0 16px -6px var(--green)}
+.dir .nm{font-family:var(--mono);font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.dir .meta{font-size:11px;color:var(--mute);margin-top:3px;display:flex;gap:5px;flex-wrap:wrap}
+.badge{font:10.5px var(--mono);padding:0 6px;border-radius:3px;background:rgba(255,255,255,.101);color:var(--violet)}
+.badge.git{background:rgba(251,191,36,.12);color:var(--amber)}.badge.cur{background:rgba(52,211,153,.14);color:var(--green)}
+.curbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid rgba(52,211,153,.35);border-radius:10px;background:rgba(52,211,153,.05)}
+/* ---- Kiteline ---- */
+.pair{display:flex;gap:26px;flex-wrap:wrap;align-items:center}
+.qr{width:200px;height:200px;background:#fff;border-radius:12px;padding:8px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px var(--line2),0 0 30px -8px var(--cyan)}
+.qr svg,.qr img{width:100%;height:100%}
+.qr.sm{width:104px;height:104px;padding:5px;border-radius:8px}
+.code6{font-family:var(--mono);font-size:44px;font-weight:700;letter-spacing:12px;color:var(--cyan);text-shadow:0 0 20px rgba(255,255,255,.324)}
+.bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:8px;width:260px}.bar i{display:block;height:100%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);transition:width 1s linear}
+.dl{display:flex;gap:14px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:10px;background:rgba(12,12,14,.4)}
+/* ---- 重置 ---- */
+.rs{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.rcard{border:1px solid var(--line);border-radius:10px;padding:14px;background:rgba(12,12,14,.4);display:flex;flex-direction:column;gap:8px}
+.rcard h4{margin:0;font-size:14px}.rcard p{margin:0;flex:1}
+#toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,10px);background:rgba(23,23,25,.95);border:1px solid var(--line2);color:var(--fg);padding:9px 18px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;font-size:13px;box-shadow:0 0 24px -8px var(--cyan);z-index:20}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line2);border-top-color:var(--cyan);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (max-width:640px){.ip{font-size:30px}.code6{font-size:34px;letter-spacing:8px}.fgrid{grid-template-columns:1fr}.top .clock{display:none}.wrap{padding:0 16px}}
+/* ================= 液态玻璃主题（和 easyCC 客户端同一套规范） ================= */
+:root{
+  --cyan:#f2f3f5;--blue:#cfd2d8;--green:#4ade80;--amber:#fbbf24;--red:#ff6b6b;--violet:#e3e4e8;
+  --fg:#f4f4f6;--mute:rgba(255,255,255,.4);--dim:rgba(255,255,255,.259);
+  --line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.14);
+  --panel:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));
+  --rim:inset 0 1px 0 rgba(255,255,255,.16),inset 0 0 0 1px rgba(255,255,255,.06);
+  --shadow:0 12px 40px -12px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.18);
+  --blur:blur(30px) saturate(180%);
+}
+html,body{background:#141416}
+body{-webkit-font-smoothing:antialiased;background:
+  radial-gradient(900px 520px at 8% -8%,rgba(255,255,255,.115),transparent 60%),
+  radial-gradient(800px 600px at 105% 10%,rgba(255,255,255,.115),transparent 60%),
+  radial-gradient(900px 600px at 60% 120%,rgba(255,255,255,.086),transparent 60%),#141416;background-attachment:fixed}
+.top{background:rgba(25,25,27,.55);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);border-bottom:1px solid var(--line)}
+.logo{font-family:inherit;letter-spacing:.2px;font-weight:650}
+.logo svg{filter:drop-shadow(0 2px 8px rgba(255,255,255,.324))}
+.inst{font-family:inherit;border-radius:99px;border-color:var(--line2);background:rgba(255,255,255,.06);color:var(--fg);padding:2px 10px}
+.chip{border-radius:99px;border-color:var(--line2);background:rgba(255,255,255,.05)}
+.node{border-radius:14px;background:var(--panel);border-color:var(--line2);box-shadow:var(--rim);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+.node.ok{border-color:rgba(74,222,128,.4);box-shadow:var(--rim)}.node.bad{border-color:rgba(255,107,107,.45);box-shadow:var(--rim)}
+.node.exit{border-color:rgba(255,255,255,.36);box-shadow:var(--rim),0 8px 24px -10px rgba(255,255,255,.36)}
+.link{background:repeating-linear-gradient(90deg,rgba(255,255,255,.4) 0 8px,transparent 8px 14px)}
+.tabs{border-bottom:0;gap:4px;padding:4px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid var(--line);display:inline-flex;max-width:100%}
+.tab{border-radius:10px;padding:7px 16px;color:rgba(255,255,255,.4)}
+.tab.on{color:#fff;background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.1));box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 4px 14px -6px rgba(0,0,0,.5)}
+.tab.on::after{display:none}
+.panel{border-radius:20px;background:var(--panel);border:1px solid var(--line2);box-shadow:var(--rim),var(--shadow);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+.panel::before,.panel::after{display:none}
+.ph h3{letter-spacing:.6px;text-transform:none;color:var(--fg);font-size:14px}
+.tag{border-radius:99px;padding:1px 9px;font-family:inherit}
+.ip{background:linear-gradient(90deg,#fff,#f4f4f6);-webkit-background-clip:text;background-clip:text;text-shadow:none}
+.btn{border-radius:11px;border:1px solid var(--line2);color:var(--fg);background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.05));box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 1px 2px rgba(0,0,0,.25)}
+.btn:hover{color:#fff;border-color:rgba(255,255,255,.26);box-shadow:inset 0 1px 0 rgba(255,255,255,.2);background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.08))}
+.btn.pri{color:#fff;border-color:rgba(255,255,255,.324);background:linear-gradient(180deg,rgba(255,255,255,.4),rgba(255,255,255,.4));box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 6px 18px -6px rgba(255,255,255,.4)}
+.btn.danger{color:var(--red);border-color:rgba(255,107,107,.35)}.btn.danger:hover{box-shadow:none;color:#fff;background:rgba(255,107,107,.6)}
+.in{border-radius:11px;background:rgba(255,255,255,.06);border-color:var(--line2);box-shadow:inset 0 1px 2px rgba(0,0,0,.25)}
+.in:focus{border-color:rgba(255,255,255,.4);box-shadow:0 0 0 4px rgba(255,255,255,.115)}
+.seg{border-radius:11px;background:rgba(255,255,255,.05);padding:2px}.seg button{border-radius:9px}
+.seg button.on{color:#fff;background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.1))}
+.checks li,.tl li{border-color:var(--line)}
+.d-pass,.d-warn,.d-fail,.d-info{box-shadow:none}
+.tl li::before{background:#1c1c1e}.tl li.ok::before,.tl li.bad::before{box-shadow:none}
+.cmd{border-radius:11px;background:rgba(0,0,0,.3)}
+.dir,.dl,.rcard{border-radius:14px;background:rgba(255,255,255,.045);border-color:var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.dir:hover{border-color:rgba(255,255,255,.25);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.dir.cur{border-color:rgba(74,222,128,.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+.curbar{border-radius:14px}
+.badge{border-radius:6px}
+.qr{box-shadow:0 10px 30px -10px rgba(0,0,0,.6)}
+.code6{text-shadow:none;color:#f4f4f6}
+.bar{background:rgba(255,255,255,.1)}.bar i{background:linear-gradient(90deg,#f4f5f7,#cfd2d8);box-shadow:none}
+#toast{border-radius:99px;background:linear-gradient(180deg,rgba(61,61,63,.9),rgba(42,42,44,.9));box-shadow:var(--rim),0 12px 30px rgba(0,0,0,.5);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+.spin{border-color:rgba(255,255,255,.18);border-top-color:var(--cyan)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:10px;border:3px solid transparent;background-clip:content-box}
+/* 切换标签的淡入动画会让 WebKit 不画里面的毛玻璃面板：去掉 */
+.page{animation:none}
+/* Agent 卡片 */
+.agrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.acard{display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.045);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);min-height:150px}
+.acard.on{border-color:rgba(74,222,128,.35)}
+.acard p{margin:0}
+.ah{display:flex;align-items:center;gap:10px}
+.alogo{width:36px;height:36px;border-radius:10px;object-fit:cover;background:#fff;flex:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 4px 12px -4px rgba(0,0,0,.6)}
+.alog{margin:0;max-height:360px;overflow:auto;font:12px/1.6 var(--mono);color:#d0d0d6;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:12px;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* ===== 统一尺寸（和客户端同一套：从窗口圆角 16 推出来，层层同心） ===== */
+:root{--wr:16px;--wg:6px;--r-lg:calc(var(--wr) - var(--wg));--r-md:calc(var(--r-lg) - 2px);--r-sm:calc(var(--r-lg) - 4px);--r-xs:4px;
+  --sp-0:4px;--sp-1:6px;--sp-2:12px;--sp-3:18px;--sp-4:24px}
+.panel,.tabs,.node{border-radius:var(--r-lg)}
+.btn,.in,.seg,.cmd,.dir,.dl,.rcard,.curbar,.acard,.alog,.qr,.alogo{border-radius:var(--r-md)}
+.tabs{padding:calc(var(--r-lg) - var(--r-sm))}
+.tab,.seg button,.qr.sm{border-radius:var(--r-sm)}
+.badge{border-radius:var(--r-xs)}
+/* 间距（和客户端同一套）：大面板内边距 18；面板里的卡片、命令框、输入框内边距 12；面板之间、卡片之间 12；图标/按钮之间 6；文字和说明之间 4 */
+.wrap{padding:0 var(--sp-3)}
+.top .wrap{gap:var(--sp-2)}
+.logo{gap:var(--sp-1)}
+.chip{gap:var(--sp-1);padding:4px var(--sp-2)}
+.tabs{margin:var(--sp-3) 0}
+.tab{padding:7px var(--sp-2)}
+.grid{gap:var(--sp-2)}
+.panel{padding:var(--sp-3)}
+.ph{gap:var(--sp-2);margin-bottom:var(--sp-2)}
+.ph b{margin-left:var(--sp-1)}
+.kv{gap:var(--sp-1) var(--sp-2);margin-top:var(--sp-2)}
+.btn{padding:6px var(--sp-2);gap:var(--sp-1)}
+.row{gap:var(--sp-1);margin-top:var(--sp-2)}
+label.f{margin:var(--sp-2) 0 var(--sp-1)}
+.in{padding:8px var(--sp-2)}
+.fgrid{gap:0 var(--sp-2)}
+.seg button{padding:6px var(--sp-2)}
+details{margin-top:var(--sp-2);padding-top:var(--sp-1)}
+.checks li{gap:var(--sp-2)}
+.tl li{padding:0 0 var(--sp-2) 22px}
+.tl .t{gap:var(--sp-2)}
+.score{gap:var(--sp-3)}
+.cmd{gap:var(--sp-1);padding:8px var(--sp-2);margin:var(--sp-1) 0}
+.qa,.dirs,.agrid,.rs{gap:var(--sp-2)}
+.qa h4{margin:0 0 var(--sp-0)}
+.dirs{margin-top:var(--sp-2)}
+.dir,.dl,.ah{gap:var(--sp-2)}
+.dir,.dl,.rcard,.acard,.curbar,.alog{padding:var(--sp-2)}
+.curbar{gap:var(--sp-2)}
+.rcard,.acard{gap:var(--sp-1)}
+.pair{gap:var(--sp-4)}
+#toast{padding:10px var(--sp-3)}
+/* ================= 无色玻璃 =================
+   和客户端同一套：玻璃不带色调，强调用白的明暗，只有状态保留绿 / 黄 / 红。 */
+:root{
+  --cyan:#f2f3f5;--blue:#cfd2d8;--violet:#e3e4e8;
+  --fg:#f4f4f6;--mute:rgba(255,255,255,.6);--dim:rgba(255,255,255,.38);
+  --line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.16);
+  --panel:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.045));
+  --rim:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 1px rgba(255,255,255,.06);
+  --blur:blur(36px) saturate(150%);
+  --ink:#141416;--lit:linear-gradient(180deg,rgba(255,255,255,.96),rgba(226,228,233,.88));
+}
+html,body{background:#151517}
+body{background:
+  radial-gradient(1100px 620px at 10% -10%,rgba(255,255,255,.13),transparent 62%),
+  radial-gradient(900px 640px at 102% 6%,rgba(255,255,255,.07),transparent 60%),
+  radial-gradient(1000px 700px at 55% 122%,rgba(255,255,255,.09),transparent 62%),#151517;background-attachment:fixed}
+::selection{background:rgba(255,255,255,.28)}
+a{color:var(--fg);text-decoration:underline;text-decoration-color:rgba(255,255,255,.4);text-underline-offset:3px}
+.top{background:rgba(24,24,26,.5)}
+.logo svg{filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+.node.exit{border-color:rgba(255,255,255,.4);box-shadow:var(--rim)}
+.link{background:repeating-linear-gradient(90deg,rgba(255,255,255,.7) 0 8px,transparent 8px 14px);background-size:28px 2px}
+.ip{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--fg);text-shadow:none}
+.btn:hover{color:#fff;border-color:rgba(255,255,255,.3)}
+.btn.pri{color:var(--ink);border-color:rgba(255,255,255,.7);background:var(--lit);box-shadow:inset 0 1px 0 #fff,0 6px 18px -8px rgba(0,0,0,.55)}
+.btn.pri:hover{color:#000;border-color:#fff;background:linear-gradient(180deg,#fff,rgba(238,240,244,.96));box-shadow:inset 0 1px 0 #fff,0 8px 22px -8px rgba(0,0,0,.6)}
+.in:focus{border-color:rgba(255,255,255,.55);box-shadow:0 0 0 4px rgba(255,255,255,.12)}
+.seg button.on{color:#fff}
+.dir:hover{border-color:rgba(255,255,255,.3)}
+.qr{box-shadow:0 10px 30px -10px rgba(0,0,0,.6)}
+.code6{color:var(--fg);text-shadow:none}
+.bar i{background:linear-gradient(90deg,#fff,#c9ccd2);box-shadow:none}
+.cmd::before{color:var(--mute)}
+.tl li::before{background:#1c1c1e}
+#toast{background:linear-gradient(180deg,rgba(78,78,84,.6),rgba(44,44,48,.56));-webkit-backdrop-filter:blur(48px) saturate(150%);backdrop-filter:blur(48px) saturate(150%)}
+.spin{border-color:rgba(255,255,255,.18);border-top-color:#fff}
+</style>
+</head>
+<body>
+<div class="top"><div class="wrap">
+  <div class="logo">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#f2f3f5" stroke-width="1.6"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M12 7v10M7.5 9.5 12 12l4.5-2.5" opacity=".7"/></svg>
+    easyCC
+  </div>
+  <span class="inst" id="inst">—</span>
+  <span class="spacer"></span>
+  <span class="chip c-mute" id="live"><span class="pulse"></span><span id="liveT">CONNECTING</span></span>
+  <div class="clock"><b id="clock">--:--:--</b><br><span id="tzc">—</span></div>
+</div></div>
+
+<div class="wrap">
+  <!-- 链路图：容器 → 防火墙 → mihomo → 上游代理 → 出口 -->
+  <div class="path" id="path">
+    <div class="node" id="n1"><div class="k">CONTAINER</div><div class="v" id="n1v">ubuntu</div></div><div class="link"></div>
+    <div class="node ok" id="n2"><div class="k">FIREWALL</div><div class="v">DROP 直连</div></div><div class="link" id="l2"></div>
+    <div class="node" id="n3"><div class="k">MIHOMO</div><div class="v" id="n3v">:7890</div></div><div class="link" id="l3"></div>
+    <div class="node" id="n4"><div class="k">UPSTREAM</div><div class="v" id="n4v">—</div></div><div class="link" id="l4"></div>
+    <div class="node exit" id="n5"><div class="k">EXIT</div><div class="v" id="n5v">—</div></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-t="ov">总览</button>
+    <button class="tab" data-t="ag">Agent</button>
+    <button class="tab" data-t="net">网络与代理</button>
+    <button class="tab" data-t="proj">项目目录</button>
+    <button class="tab" data-t="kl">手机 · Kiteline</button>
+    <button class="tab" data-t="mt">维护</button>
+  </div>
+
+  <!-- ===== 总览 ===== -->
+  <section class="page on" id="p-ov"><div class="grid">
+    <div class="panel s5">
+      <div class="ph"><h3>出口 IP</h3><span class="tag c-mute" id="netTag">—</span></div>
+      <div class="ip" id="ip">—</div>
+      <div class="hint" id="loc" style="margin-top:4px">—</div>
+      <div class="kv">
+        <div>时区</div><div id="tz">—</div>
+        <div>浏览器语言</div><div id="lang">—</div>
+        <div>上游代理</div><div id="proxy">—</div>
+        <div>直连外网</div><div class="c-ok">BLOCKED</div>
+        <div>最近应用</div><div id="applied">—</div>
+      </div>
+      <div class="row"><button class="btn" onclick="go('net')">修改代理</button><button class="btn" onclick="testProxy()">测试连通</button></div>
+    </div>
+
+    <div class="panel s7">
+      <div class="ph"><h3>环境检查</h3><span class="tag c-mute" id="envTag">未检查</span><span class="spacer"></span><button class="btn" id="btnEnv" onclick="checkEnv()">重新检查</button></div>
+      <div class="score">
+        <div class="ring"><svg width="118" height="118"><circle cx="59" cy="59" r="50" stroke="rgba(255,255,255,.086)" stroke-width="9" fill="none"/>
+          <circle id="arc" cx="59" cy="59" r="50" stroke="#f2f3f5" stroke-width="9" fill="none" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="314" style="transition:stroke-dashoffset .8s,stroke .3s"/></svg>
+          <div class="n"><b id="scoreN">--</b><span id="scoreT">SCORE</span></div></div>
+        <div style="flex:1;min-width:0"><div class="hint" id="envHint">直连封锁、出口一致、DNS / IPv6 泄漏、时区、IP 信誉、Claude 可达</div>
+          <ul class="checks" id="envList" style="margin-top:6px;max-height:312px;overflow:auto"></ul></div>
+      </div>
+    </div>
+
+    <div class="panel s12">
+      <div class="ph"><h3>联网检查</h3><span class="tag c-mute" id="gateTag">—</span><span class="spacer"></span>
+        <button class="btn" id="gRebase" onclick="gateAct('recheck',{rebase:true})" style="display:none">以当前出口为准</button>
+        <button class="btn" id="gPause" onclick="gatePause()">暂停外网</button>
+        <button class="btn pri" id="gRe" onclick="gateAct('recheck')">重新检查</button></div>
+      <div class="hint" id="gateHint">关键项全部通过才放行外网；任何一项失败或拿不到结果，外网保持关闭（终端、文件、本地服务照常可用）。出口在中国大陆一律不放行。</div>
+      <div class="kv" style="margin-top:6px"><div>出口规则</div><div id="gateRule">—</div></div>
+      <ul class="checks" id="gateList" style="margin-top:6px"></ul>
+    </div>
+
+    <div class="panel s12">
+      <div class="ph"><h3>访问本机</h3><span class="tag c-mute" id="haTag">未授权</span><span class="spacer"></span>
+        <button class="btn pri" id="haBtn" onclick="toggleHost()">一键授权访问本机</button></div>
+      <div class="hint" id="haDesc">授权后，环境里的 Agent / 浏览器访问 <span class="mono c-info">host.internal:端口</span> 就是你电脑本机的 <span class="mono">localhost:端口</span>；电脑上的本地证书（mkcert、钥匙串里自己装的根证书）会自动导入，访问本机的 HTTPS 不报证书错误。不授权时环境完全访问不到本机。</div>
+      <div class="kv" id="haInfo" style="display:none"></div>
+      <div class="row" id="haSshRow" style="display:none;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
+        <div style="flex:1"><b>允许 SSH 控制本机</b><div class="hint">环境里 <span class="mono c-info">ssh host</span> 直接登录你的电脑、能执行命令（用专用密钥，撤销即作废）。权限很大，只在需要时打开。</div></div>
+        <button class="btn" id="haSshBtn" onclick="toggleSsh()">允许</button></div>
+    </div>
+
+    <div class="panel s12">
+      <div class="ph"><h3>快速开始</h3></div>
+      <div class="qa">
+        <div><h4>① 运行 Claude Code</h4><div class="hint">首次运行按提示登录，授权页在容器浏览器里打开。</div><div class="cmd" data-c="easycc claude {inst}"></div></div>
+        <div><h4>② 环境浏览器</h4><div class="hint">完整浏览器（Firefox 或 Chrome，英文界面），和环境同一个出口 IP、时区、语言；WebRTC、定位已关。</div>
+          <div class="row" style="margin-top:6px"><input class="in" id="openUrl" placeholder="粘贴链接，在环境浏览器中打开" style="flex:1;min-width:0"><button class="btn" onclick="openInEnv()">打开</button></div>
+          <div class="row" style="margin-top:6px"><button class="btn pri" onclick="openDesktop()">打开浏览器桌面 ↗</button><span class="hint mono" id="vncPw"></span></div></div>
+        <div><h4>③ VS Code / Cursor</h4><div class="hint">Remote-SSH 选主机 <span class="mono c-info">easycc-<span class="instN"></span></span></div><div class="cmd" data-c="easycc code {inst}"></div></div>
+        <div><h4>④ 当前项目</h4><div class="hint mono" id="ovProj" style="overflow-wrap:anywhere">—</div><div class="row" style="margin-top:6px"><button class="btn" onclick="go('proj')">选择项目</button></div></div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- ===== 网络与代理 ===== -->
+  <section class="page" id="p-net"><div class="grid">
+    <div class="panel s7">
+      <div class="ph"><h3>上游代理</h3><span class="hint">改完先测试，再保存应用；新代理不通会自动恢复原配置</span></div>
+      <div class="seg" id="ptype"><button data-v="socks5" class="on">SOCKS5</button><button data-v="http">HTTP</button></div>
+      <div class="fgrid">
+        <div><label class="f">服务器地址（IP 或域名）</label><input class="in" id="fHost" placeholder="1.2.3.4" autocomplete="off" spellcheck="false"></div>
+        <div><label class="f">端口</label><input class="in" id="fPort" placeholder="1080" inputmode="numeric"></div>
+        <div><label class="f">用户名</label><input class="in" id="fUser" autocomplete="off" spellcheck="false"></div>
+        <div><label class="f">密码</label><input class="in" id="fPass" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="row" style="margin-top:6px"><span class="hint">或粘贴整串地址：</span><input class="in" id="fUrl" style="flex:1;min-width:220px" placeholder="socks5://user:pass@1.2.3.4:1080"></div>
+      <div class="row" style="margin-top:6px"><span class="hint">中转代理（可选）：</span><input class="in" id="fRelay" style="flex:1;min-width:220px" placeholder="留空 = 直连上面的代理；填了 = 链式代理：环境 → 中转 → 上面的代理（落地）" autocomplete="off" spellcheck="false"></div>
+      <div class="hint" style="margin-top:4px">落地节点（如住宅 IP）直连不稳定，或「DNS 出口」检查提示解析服务器不在出口国家时，用链式代理：域名会在落地节点那边解析。</div>
+      <details id="adv"><summary>高级：出口规则、时区、语言</summary>
+        <div class="fgrid">
+          <div><label class="f">固定出口 IP（填了就必须是这个 IP，否则断网）</label><input class="in" id="fExpect" placeholder="留空 = 动态 IP，按下面的范围"></div>
+          <div><label class="f">动态 IP 允许变化的范围（超出即断网）</label><div class="seg" id="fRule"><button data-v="country" class="on">同一国家</button><button data-v="region">同一州省</button><button data-v="city">同一城市</button><button data-v="any">不限</button></div></div>
+          <div><label class="f">时区（留空 = 跟随出口 IP）</label><input class="in" id="fTz" placeholder="自动" list="tzs"></div>
+          <div><label class="f">浏览器语言（留空 = 跟随出口国家）</label><input class="in" id="fLang" placeholder="自动，如 en-US, en"></div>
+        </div>
+        <datalist id="tzs"><option>America/Los_Angeles<option>America/New_York<option>America/Chicago<option>Europe/London<option>Europe/Berlin<option>Asia/Tokyo<option>Asia/Singapore<option>Asia/Hong_Kong<option>Asia/Seoul<option>Australia/Sydney</datalist>
+      </details>
+      <div class="row"><button class="btn" id="btnT" onclick="testNew()">测试这个代理</button><button class="btn pri" id="btnA" onclick="applyNew()">保存并应用</button><span class="hint" id="formMsg"></span></div>
+    </div>
+    <div class="panel s5">
+      <div class="ph"><h3>连通实测</h3><span class="tag c-mute" id="probeTag">—</span></div>
+      <div class="hint" id="probeHint" style="margin-bottom:12px">绕过 mihomo 直接按协议逐步握手，失败时指出卡在哪一步</div>
+      <ul class="tl" id="probe"></ul>
+    </div>
+  </div></section>
+
+  <!-- ===== 项目目录 ===== -->
+  <section class="page" id="p-proj"><div class="grid"><div class="panel s12">
+    <div class="ph"><h3>项目目录</h3><span class="hint">容器里 <span class="mono">/workspace</span> 指向当前项目；Claude、SSH、VS Code 都从这里打开</span></div>
+    <div class="curbar"><span class="dot d-pass" style="margin:0"></span><div style="flex:1;min-width:0"><div class="hint">当前项目</div><div class="mono" id="curProj" style="overflow-wrap:anywhere">—</div></div>
+      <span class="hint mono" id="hostPath"></span></div>
+    <div class="row" style="justify-content:space-between">
+      <div class="crumb" id="crumb"></div>
+      <div class="row" style="margin:0"><input class="in" id="newDir" placeholder="新文件夹名" style="width:170px"><button class="btn" onclick="mkDir()">新建</button><button class="btn pri" id="btnHere" onclick="useHere()">把这一层设为项目</button></div>
+    </div>
+    <div class="dirs" id="dirs"></div>
+    <div class="hint" id="projMsg" style="margin-top:12px"></div>
+    <details><summary>想用项目根目录以外的文件夹？</summary>
+      <div class="hint" style="margin-top:6px">容器只能看到创建时挂载的根目录（<span class="mono" id="rootP">—</span>）。在终端里运行下面的命令，会弹出访达选择窗口，选了根目录以外的文件夹会自动改挂载并重启容器：</div>
+      <div class="cmd" data-c="easycc project {inst}"></div>
+    </details>
+  </div></div></section>
+
+  <!-- ===== Kiteline ===== -->
+  <section class="page" id="p-kl"><div class="grid">
+    <div class="panel s7">
+      <div class="ph"><h3>绑定手机</h3><span class="tag c-mute" id="klTag">—</span></div>
+      <div id="klBody" class="hint">读取中…</div>
+    </div>
+    <div class="panel s5">
+      <div class="ph"><h3>下载 Kiteline</h3></div>
+      <div class="dl"><div class="qr sm" id="asQR"></div><div><b>iPhone / iPad / Apple Watch</b><div class="hint">App Store 搜索 Kiteline，或扫码</div><a href="https://apps.apple.com/app/id6825244029" target="_blank" rel="noopener">打开 App Store ↗</a></div></div>
+      <div class="dl" style="margin-top:12px"><div class="qr sm"><img src="/static/miniprogram-qr.jpg" alt="Kiteline 微信小程序码"></div><div><b>安卓 / 不想装 App</b><div class="hint">微信扫码打开 Kiteline 小程序</div></div></div>
+      <ol class="hint" style="margin:12px 0 0;padding-left:18px"><li>打开 App 或小程序</li><li>扫左侧配对码，或输入 6 位验证码</li><li>容器里的 Claude Code 会话出现在手机上</li></ol>
+    </div>
+  </div></section>
+
+  <!-- ===== 维护 ===== -->
+  <!-- ===== Agent ===== -->
+  <section class="page" id="p-ag"><div class="grid">
+    <div class="panel s12">
+      <div class="ph"><h3>AI 编程 Agent</h3><span class="hint">环境默认不预装，选一个点「安装」，安装过程实时显示在下面；装好的会成为终端按钮默认打开的 agent</span>
+        <span class="spacer"></span><button class="btn" onclick="loadAgents(true)">刷新</button></div>
+      <div class="agrid" id="agList"><div class="hint">加载中…</div></div>
+    </div>
+    <div class="panel s12" id="agLogP" style="display:none">
+      <div class="ph"><h3>安装过程 <b id="agLogT"></b></h3><span class="tag" id="agLogS"></span><span class="spacer"></span><button class="btn" onclick="$('agLogP').style.display='none';AGLOG.id=''">收起</button></div>
+      <pre class="alog" id="agLog"></pre>
+    </div>
+  </div></section>
+
+  <section class="page" id="p-mt"><div class="grid">
+    <div class="panel s12">
+      <div class="ph"><h3>一键重置</h3><span class="hint">项目目录任何时候都不会被动</span></div>
+      <div class="rs">
+        <div class="rcard"><h4>重新连接网络</h4><p class="hint">重启 mihomo，重新自检出口 IP、时区和语言。</p><button class="btn" onclick="doReset('network','重新连接网络并自检？')">重连</button></div>
+        <div class="rcard"><h4>清空浏览器</h4><p class="hint">删除容器浏览器的登录状态、Cookie、历史和缓存。</p><button class="btn" onclick="doReset('browser','清空容器浏览器的全部数据？')">清空</button></div>
+        <div class="rcard"><h4>卸载所有 Agent</h4><p class="hint">删除装过的 Claude Code、Codex、Gemini CLI 等程序（登录数据另外清）。</p><button class="btn" onclick="doReset('agents','卸载环境里所有的 agent？')">卸载</button></div>
+        <div class="rcard"><h4>退出 Claude 登录</h4><p class="hint">清空 Claude Code 的登录、设置和本地对话记录，程序保留。</p><button class="btn" onclick="doReset('claude','退出 Claude Code 登录并清空它的本地数据？')">退出</button></div>
+        <div class="rcard" id="rcKl"><h4>重新配对 Kiteline</h4><p class="hint">清空配对关系，所有手机都要重新扫码。</p><button class="btn" onclick="doReset('kiteline','清空 Kiteline 配对？')">重新配对</button></div>
+        <div class="rcard"><h4>恢复初始状态</h4><p class="hint">清空容器用户目录：浏览器、Claude 登录、Kiteline 配对等全部设置。</p><button class="btn danger" onclick="doReset('all','恢复初始状态会清空容器用户目录（项目目录不动）。确定？')">恢复初始</button></div>
+      </div>
+      <div class="hint" id="resetMsg" style="margin-top:12px"></div>
+    </div>
+    <div class="panel s12">
+      <div class="ph"><h3>系统信息</h3></div>
+      <div class="kv" style="grid-template-columns:120px minmax(0,1fr)">
+        <div>系统</div><div id="os">—</div>
+        <div>Claude Code</div><div id="claudeV">—</div>
+        <div>容器运行时</div><div id="rt">—</div>
+        <div>启动于</div><div id="started">—</div>
+        <div>SSH</div><div id="sshI">—</div>
+      </div>
+    </div>
+  </div></section>
+  <div style="height:40px"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let S={},CFG={},ptype="socks5",klTimer=null,klExpiry=0,klTotal=600000,projPath="";
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove("on"),2200)}
+async function api(path,body){
+  const r=await fetch(path,body===undefined?{cache:"no-store"}:{method:"POST",headers:{"X-CBox":"1","Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(r.status===401){location.href="/login";throw new Error("401")}
+  return r.json();
+}
+function busy(btn,on,text){if(!btn)return;if(on){btn._t=btn.innerHTML;btn.innerHTML=`<span class="spin"></span> ${text||"处理中"}`;btn.disabled=true}else{btn.innerHTML=btn._t||btn.innerHTML;btn.disabled=false}}
+function flag(cc){return cc&&cc.length===2?String.fromCodePoint(...[...cc.toUpperCase()].map(c=>127397+c.charCodeAt(0)))+" ":""}
+function go(t){document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("on",b.dataset.t===t));document.querySelectorAll(".page").forEach(p=>p.classList.toggle("on",p.id==="p-"+t));
+  try{localStorage.setItem("cbox-tab",t)}catch(e){}
+  if(t==="ag")loadAgents(false);if(t==="proj")loadProjects(projPath);if(t==="kl")loadKiteline(false);if(t==="net"&&!CFG.loaded)loadConfig()}
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>go(b.dataset.t));
+
+
+/* ---------- Agent ---------- */
+let AG=[],AGLOG={id:"",off:0,timer:0};
+async function loadAgents(fresh){
+  const r=await api("/api/agents"+(fresh?"?fresh=1":""));AG=r.agents||[];
+  $("agList").innerHTML=AG.map(a=>{
+    const st=a.status==="running"?`<span class="tag c-info"><span class="spin" style="width:9px;height:9px;border-width:1.5px"></span> ${a.action==="install"?"安装中":"卸载中"}</span>`
+      :a.status==="installed"?`<span class="tag c-ok">已安装 ${esc(a.version)}</span>`:a.status==="failed"?`<span class="tag c-bad">上次失败</span>`:`<span class="tag c-mute">未安装</span>`;
+    const btns=a.status==="running"?`<button class="btn" onclick="showLog('${a.id}')">查看进度</button>`
+      :a.status==="installed"?`${a.default?'<span class="tag c-info">终端默认</span>':`<button class="btn" onclick="agDefault('${a.id}')">设为默认</button>`}<button class="btn" onclick="agAct('${a.id}','install')">更新</button><button class="btn danger" onclick="agAct('${a.id}','uninstall')">卸载</button>`
+      :`<button class="btn pri" onclick="agAct('${a.id}','install')">安装</button>${a.status==="failed"?`<button class="btn" onclick="showLog('${a.id}')">看日志</button>`:""}`;
+    return `<div class="acard${a.status==="installed"?" on":""}"><div class="ah"><img class="alogo" src="${a.icon}" alt="${esc(a.name)}">
+      <div><b>${esc(a.name)}</b><div class="hint">${esc(a.vendor)} · <span class="mono">${esc(a.bin)}</span></div></div><span class="spacer"></span>${st}</div>
+      <p class="hint">${esc(a.desc)}</p><div class="row" style="margin-top:auto">${btns}<span class="spacer"></span><a href="${a.home}" target="_blank" class="hint">官网 ↗</a></div></div>`}).join("");
+  const run=AG.find(a=>a.status==="running");if(run&&!AGLOG.id)showLog(run.id);
+}
+async function agAct(id,action){
+  const a=AG.find(x=>x.id===id);if(action==="uninstall"&&!confirm(`卸载 ${a.name}？`))return;
+  const r=await api(`/api/agents/${id}/${action}`,{});toast(r.message);if(r.ok){showLog(id);loadAgents(false)}}
+async function agDefault(id){const r=await api(`/api/agents/${id}/default`,{});toast(r.message);loadAgents(false)}
+function showLog(id){const a=AG.find(x=>x.id===id)||{name:id};AGLOG={id,off:0,timer:AGLOG.timer};$("agLog").textContent="";$("agLogT").textContent=a.name;
+  $("agLogP").style.display="block";$("agLogP").scrollIntoView({behavior:"smooth",block:"nearest"});clearTimeout(AGLOG.timer);pollLog()}
+async function pollLog(){const id=AGLOG.id;if(!id)return;
+  const r=await api(`/api/agents/${id}/log?offset=${AGLOG.off}`);if(id!==AGLOG.id)return;
+  if(r.text){const el=$("agLog"),bottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20;el.textContent+=r.text;if(bottom)el.scrollTop=el.scrollHeight}
+  AGLOG.off=r.offset;
+  const t=$("agLogS");t.className="tag "+(r.running?"c-info":r.status==="done"?"c-ok":r.status==="failed"?"c-bad":"c-mute");
+  t.innerHTML=r.running?'<span class="spin" style="width:9px;height:9px;border-width:1.5px"></span> 进行中':r.status==="done"?"完成":r.status==="failed"?`失败（退出码 ${r.exit}）`:"";
+  if(r.running)AGLOG.timer=setTimeout(pollLog,800);else loadAgents(true)}
+
+/* ---------- 状态 ---------- */
+async function loadStatus(){
+  S=await api("/api/status");
+  const n=S.instance||"<实例名>";
+  $("inst").textContent=n;document.querySelectorAll(".instN").forEach(e=>e.textContent=n);
+  document.querySelectorAll(".cmd").forEach(e=>e.textContent=e.dataset.c.replaceAll("{inst}",n));
+  $("ip").textContent=S.exitIP||"—";$("loc").textContent=(flag(S.country)+(S.location||""))||"—";
+  $("tz").textContent=S.timezone||"—";$("lang").textContent=S.acceptLanguage||"—";$("proxy").textContent=S.proxy||"—";
+  $("applied").textContent=S.applied||S.started||"—";$("tzc").textContent=S.timezone||"";
+  $("n1v").textContent=S.hostname||"ubuntu";$("n3v").textContent=S.mihomo?":7890 运行中":"已停止";
+  $("n4v").textContent=(S.proxy||"—").replace(/^[a-z0-9]+:\/\/([^@]*@)?/,"");$("n5v").textContent=S.exitIP?(flag(S.country)+S.exitIP):"—";
+  const kill=S.killswitch||String(S.state).startsWith("KILL"),fail=String(S.state).startsWith("FAILED");
+  $("n3").className="node "+(S.mihomo?"ok":"bad");$("n4").className="node "+(kill||!S.mihomo?"bad":"ok");
+  ["l3","l4"].forEach(id=>$(id).classList.toggle("off",!S.mihomo||kill));$("l2").classList.toggle("off",!S.mihomo);
+  const G=S.gate||{};renderGate(G);
+  let cls="c-ok",t="SECURE · 出口受控",tag="正常";
+  if(kill){cls="c-bad";t="KILLSWITCH · 已断网";tag="已断网"}else if(fail){cls="c-bad";t="FAILED";tag="启动失败"}
+  else if(G.paused){cls="c-warn";t="PAUSED · 外网已暂停";tag="已暂停"}
+  else if(S.state==="running"&&G.open===false){cls="c-bad";t="OFFLINE · 检查未通过";tag="外网关闭"}
+  else if(!S.mihomo){cls="c-bad";t="MIHOMO DOWN";tag="mihomo 未运行"}else if(S.state!=="running"){cls="c-info";t="STARTING";tag="启动中"}
+  $("live").className="chip "+cls;$("liveT").textContent=t;$("netTag").className="tag "+cls;$("netTag").textContent=tag;
+  $("vncPw").textContent=S.vncPassword?"VNC 密码 "+S.vncPassword:"";
+  const proj="/projects/"+(S.project||"");$("ovProj").textContent=(S.hostRoot?S.hostRoot.replace(/\/$/,"")+(S.project?"/"+S.project:""):proj);
+  $("os").textContent=`${S.os} · ${S.arch} · ${S.hostname}`;$("claudeV").textContent=S.claude||"未安装";$("rt").textContent=S.runtime||"—";
+  $("started").textContent=S.started||"—";$("sshI").textContent=`ssh easycc-${n}${S.sshPort?"（本机端口 "+S.sshPort+"）":""} · 用户 dev · 仅公钥`;
+}
+/* ---------- 联网检查（闸门） ---------- */
+const RULES={static:"固定 IP",country:"动态 IP · 同一国家",region:"动态 IP · 同一州省",city:"动态 IP · 同一城市",any:"动态 IP · 不限地区"};
+function renderGate(G){
+  const st={passed:"pass",failed:"fail",unknown:"warn",warning:"warn"};
+  $("gateList").innerHTML=(G.checks||[]).map(c=>`<li><span class="dot d-${st[c.state]||"idle"}"></span><span>${esc(c.title)}</span><span>${esc(c.evidence)}${c.remedy?`<br><span class="hint">${c.state==="warning"?"提示（不影响上网）：":""}${esc(c.remedy)}</span>`:""}</span></li>`).join("");
+  const tag=$("gateTag");
+  if(G.paused){tag.className="tag c-warn";tag.textContent="外网已暂停"}
+  else if(G.open){tag.className="tag c-ok";tag.textContent="已放行"}
+  else{tag.className="tag c-bad";tag.textContent="外网关闭"}
+  let h=G.paused?"外网已手动暂停：终端、文件、本地服务照常可用。点「恢复外网」会重新检查后放行。":
+    G.open?`关键项全部通过，外网已放行。每 5 分钟自动复查一次，不通过立即断网。${G.checkedTs?"上次检查 "+new Date(G.checkedTs*1000).toLocaleTimeString("zh-CN",{hour12:false}):""}`:
+    `外网关闭：${G.reason||"还没检查"}${G.nextIn!=null?`。${G.nextIn} 秒后自动重试`:""}`;
+  $("gateHint").textContent=h;
+  const b=G.base;$("gateRule").textContent=(RULES[G.rule]||G.rule||"—")+(b&&G.rule!=="static"&&G.rule!=="any"?`（基准：${[b.cc,b.region,b.city].filter(Boolean).join(" / ")}）`:"");
+  $("gRebase").style.display=b&&["country","region","city"].includes(G.rule)?"":"none";
+  $("gPause").textContent=G.paused?"恢复外网":"暂停外网";
+}
+async function gateAct(act,body){
+  if(body&&body.rebase&&!confirm("以当前出口所在地作为新的基准？之后出口只能在新基准的范围内变化。"))return;
+  const b=act==="recheck"?$("gRe"):$("gPause");busy(b,true,act==="pause"?"暂停中":"检查中");
+  $("gateHint").innerHTML='<span class="spin"></span> 正在逐项检查，约 20–40 秒…';
+  try{const r=await api("/api/gate/"+act,body||{});toast(r.message);renderGate(r.gate||{})}catch(e){toast("操作失败")}
+  busy(b,false);loadStatus();
+}
+function gatePause(){
+  if((S.gate||{}).paused)return gateAct("resume");
+  if(confirm("暂停外网？环境里正在进行的网络连接会立即断开，终端和文件照常可用。"))gateAct("pause");
+}
+function tickClock(){
+  try{$("clock").textContent=new Intl.DateTimeFormat("en-GB",{timeZone:S.timezone||undefined,hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(new Date())}catch(e){}
+}
+setInterval(tickClock,1000);
+
+/* ---------- 环境检查 ---------- */
+async function checkEnv(){
+  const b=$("btnEnv");busy(b,true,"检查中");$("envTag").className="tag c-info";$("envTag").textContent="检查中";$("envHint").textContent="正在逐项检查，约 20 秒…";
+  try{
+    const r=await api("/api/check/env",{});
+    $("envList").innerHTML=r.items.map(i=>`<li><span class="dot d-${i.level}"></span><span>${esc(i.name)}</span><span>${esc(i.detail)}${i.hint?`<br><span class="hint">${esc(i.hint)}</span>`:""}</span></li>`).join("");
+    const scored=r.items.filter(i=>i.level!=="info"),pass=scored.filter(i=>i.level==="pass").length,warn=scored.filter(i=>i.level==="warn").length;
+    const score=scored.length?Math.round((pass+warn*.5)/scored.length*100):0;
+    $("scoreN").textContent=score;$("scoreT").textContent=`${pass}/${scored.length} PASS`;
+    const color=r.overall==="pass"?"#34d399":r.overall==="warn"?"#fbbf24":"#f87171";
+    $("arc").style.stroke=color;$("arc").style.strokeDashoffset=314*(1-score/100);$("arc").style.filter=`drop-shadow(0 0 6px ${color})`;
+    $("envTag").className="tag "+(r.overall==="pass"?"c-ok":r.overall==="warn"?"c-warn":"c-bad");$("envTag").textContent=r.overall==="pass"?"环境干净":r.overall==="warn"?"有注意项":"有问题";
+    $("envHint").textContent="检查于 "+r.checkedAt;
+  }catch(e){$("envHint").textContent="检查出错"}
+  busy(b,false);
+}
+
+/* ---------- 代理 ---------- */
+document.querySelectorAll("#ptype button").forEach(b=>b.onclick=()=>setType(b.dataset.v));
+let xrule="country";
+document.querySelectorAll("#fRule button").forEach(b=>b.onclick=()=>setRule(b.dataset.v));
+function setRule(v){xrule=v;document.querySelectorAll("#fRule button").forEach(x=>x.classList.toggle("on",x.dataset.v===v))}
+function setType(v){ptype=v;document.querySelectorAll("#ptype button").forEach(x=>x.classList.toggle("on",x.dataset.v===v))}
+async function loadConfig(){
+  CFG=await api("/api/config");CFG.loaded=true;
+  setType(CFG.type||"socks5");$("fHost").value=CFG.host||"";$("fPort").value=CFG.port||"";$("fUser").value=CFG.user||"";
+  $("fPass").value="";$("fPass").placeholder=CFG.hasPass?"•••••• 不改就留空":"";
+  $("fRelay").value=CFG.relay||"";$("fExpect").value=CFG.expectIP||"";$("fTz").value=CFG.tzOverride||"";$("fLang").value=CFG.acceptLanguage||"";setRule(CFG.exitRule||"country");
+  if(CFG.expectIP||CFG.tzOverride||CFG.acceptLanguage||(CFG.exitRule&&CFG.exitRule!=="country"))$("adv").open=true;
+}
+$("fUrl").addEventListener("change",()=>{
+  try{const v=$("fUrl").value.trim();if(!v)return;const u=new URL(v.includes("://")?v:"socks5://"+v);
+    setType(u.protocol.startsWith("http")?"http":"socks5");$("fHost").value=u.hostname;$("fPort").value=u.port||"1080";
+    $("fUser").value=decodeURIComponent(u.username);$("fPass").value=decodeURIComponent(u.password);$("fUrl").value="";toast("已填入")}
+  catch(e){toast("地址格式不对")}
+});
+function form(){return{type:ptype,host:$("fHost").value.trim(),port:$("fPort").value.trim(),user:$("fUser").value,pass:$("fPass").value,keepPass:true,
+  expectIP:$("fExpect").value.trim(),tzOverride:$("fTz").value.trim(),acceptLanguage:$("fLang").value.trim(),exitRule:xrule,relay:$("fRelay").value.trim()}}
+function renderProbe(r,title){
+  $("probe").innerHTML=(r.steps||[]).map(s=>`<li class="${s.ok?"ok":"bad"}"><div class="t"><b>${esc(s.name)}</b><span class="ms">${s.ms!=null?s.ms+" ms":""}</span></div><div class="hint">${esc(s.detail)}</div></li>`).join("")+
+    (r.delay!==undefined?`<li class="${r.delay?"ok":"bad"}"><div class="t"><b>mihomo 延迟</b><span class="ms">${r.delay?r.delay+" ms":"—"}</span></div><div class="hint">经 mihomo 访问 Google 204</div></li>`:"");
+  $("probeTag").className="tag "+(r.ok?"c-ok":"c-bad");$("probeTag").textContent=r.ok?"可用":"不可用";
+  $("probeHint").textContent=title+(r.ok?"：代理可用"+(r.ip?"，出口 "+r.ip:""):"：卡在标红的那一步");
+}
+async function testProxy(){go("net");$("probeHint").innerHTML='<span class="spin"></span> 正在测试当前代理…';$("probe").innerHTML="";
+  try{renderProbe(await api("/api/check/proxy",{}),"当前代理")}catch(e){$("probeHint").textContent="测试出错"}}
+async function testNew(){
+  const b=$("btnT");busy(b,true,"测试中");$("probeHint").innerHTML='<span class="spin"></span> 正在测试填写的代理…';$("probe").innerHTML="";
+  try{renderProbe(await api("/api/proxy/test",form()),"填写的代理")}catch(e){$("probeHint").textContent="测试出错"}
+  busy(b,false);
+}
+async function applyNew(){
+  if(!confirm("保存并应用新的代理设置？应用时网络会短暂中断；新代理不通会自动恢复原配置。"))return;
+  const b=$("btnA");busy(b,true,"应用中");$("formMsg").textContent="";
+  try{const r=await api("/api/proxy/apply",form());$("formMsg").innerHTML=`<span class="${r.ok?"c-ok":"c-bad"}">${r.ok?"✓":"✗"} ${esc(r.message)}</span>`;toast(r.message);
+    if(r.ok){CFG.loaded=false;await loadConfig();await loadStatus();checkEnv()}}
+  catch(e){$("formMsg").textContent="应用出错"}
+  busy(b,false);
+}
+
+/* ---------- 项目 ---------- */
+async function loadProjects(path){
+  const r=await api("/api/projects?path="+encodeURIComponent(path||""));
+  if(!r.ok){$("projMsg").textContent=r.message;return}
+  projPath=r.path;const root=(r.hostRoot||"/projects").replace(/\/$/,"");
+  $("rootP").textContent=root;$("curProj").textContent="/projects/"+(r.current||"");$("hostPath").textContent=r.current!==undefined?"主机："+root+(r.current?"/"+r.current:""):"";
+  const parts=r.path?r.path.split("/"):[];
+  $("crumb").innerHTML=`<a onclick="loadProjects('')">${esc(root.split("/").pop()||"/")}</a>`+parts.map((p,i)=>`<span>/</span><a onclick="loadProjects('${esc(parts.slice(0,i+1).join("/")).replace(/'/g,"\\'")}')">${esc(p)}</a>`).join("");
+  const cur=r.current||"";
+  $("dirs").innerHTML=r.dirs.length?r.dirs.map(d=>{const rel=(r.path?r.path+"/":"")+d.name,isCur=rel===cur;
+    return `<div class="dir${isCur?" cur":""}" data-rel="${esc(rel)}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${isCur?"#34d399":"#f2f3f5"}" stroke-width="1.6" style="flex:none;margin-top:1px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <div style="min-width:0;flex:1"><div class="nm">${esc(d.name)}</div><div class="meta">${isCur?'<span class="badge cur">当前</span>':""}${d.kinds.map(k=>`<span class="badge ${k==="git"?"git":""}">${k}</span>`).join("")}</div></div>
+      <button class="btn" style="padding:4px 10px;font-size:12px" data-use="${esc(rel)}">设为项目</button></div>`}).join(""):'<div class="hint">这一层没有子文件夹</div>';
+  $("btnHere").textContent=r.path?"把这一层设为项目":"把根目录设为项目";
+}
+$("dirs").addEventListener("click",e=>{const u=e.target.closest("[data-use]");if(u){e.stopPropagation();setProject(u.dataset.use);return}
+  const d=e.target.closest(".dir");if(d)loadProjects(d.dataset.rel)});
+async function setProject(rel){const r=await api("/api/project",{path:rel});$("projMsg").innerHTML=`<span class="${r.ok?"c-ok":"c-bad"}">${r.ok?"✓":"✗"} ${esc(r.message)}</span>`;toast(r.ok?"已切换项目":r.message);loadProjects(projPath);loadStatus()}
+function useHere(){setProject(projPath)}
+async function mkDir(){const n=$("newDir").value.trim();if(!n)return;const r=await api("/api/project/mkdir",{path:projPath,name:n});toast(r.message);if(r.ok){$("newDir").value="";loadProjects(projPath)}}
+
+/* ---------- Kiteline ---------- */
+function tick(){
+  const left=Math.max(0,klExpiry-Date.now()),s=Math.round(left/1000);
+  const e=$("klLeft");if(e)e.textContent=s?`${Math.floor(s/60)}:${String(s%60).padStart(2,"0")} 后失效`:"已失效，正在刷新…";
+  const bar=$("klBar");if(bar)bar.style.width=(left/klTotal*100)+"%";
+  if(!s){clearInterval(klTimer);klTimer=null;loadKiteline(true)}
+}
+async function loadKiteline(renew){
+  let k;try{k=renew?await api("/api/kiteline/renew",{}):await api("/api/kiteline")}catch(e){return}
+  const body=$("klBody"),tag=$("klTag");
+  if(!k.installed){tag.className="tag c-mute";tag.textContent="未安装";body.innerHTML=`<div class="hint">${esc(k.reason)}</div>`;$("rcKl").style.display="none";return}
+  if(!k.running||k.starting){tag.className="tag c-info";tag.textContent="启动中";body.innerHTML='<span class="spin"></span> Kiteline 正在启动…';setTimeout(()=>loadKiteline(false),3000);return}
+  const r=k.remote||{},devs=k.devices||[],online=devs.filter(d=>d.online).length;
+  tag.className="tag "+(devs.length?"c-ok":"c-info");tag.textContent=devs.length?`已绑定 ${devs.length} 台`:"等待绑定";
+  body.innerHTML=`<div class="pair"><div class="qr">${k.qr||""}</div><div>
+    <div class="hint">配对验证码</div><div class="code6">${esc(k.code||"······")}</div>
+    <div class="bar"><i id="klBar"></i></div><div class="hint mono" id="klLeft" style="margin-top:6px"></div>
+    <div class="row"><button class="btn" onclick="loadKiteline(true)">换一个码</button></div></div></div>
+    <div class="kv" style="margin-top:18px"><div>远程连接</div><div>${esc(r.state||"—")}${r.relay?" · "+esc(r.relay):""}</div>
+      <div>版本</div><div>Kiteline ${esc(k.version)} · 会话 ${k.sessions}</div><div>在线设备</div><div>${online} / ${devs.length}</div></div>
+    ${devs.length?`<ul class="checks" style="margin-top:12px">${devs.map(d=>`<li><span class="dot d-${d.online?"pass":"idle"}"></span><span>${esc(d.name)}</span><span class="hint">${d.online?"在线":"离线"}${d.via?" · "+esc(d.via):""}</span></li>`).join("")}</ul>`:""}
+    <div class="hint" style="margin-top:12px">容器不在你的局域网里，手机经 Kiteline 远程连接（中继）连进来，同样走这里的代理出口。${k.remoteEnabled===false?'<span class="c-warn">远程连接未开启，手机连不进容器。</span>':""}</div>`;
+  klExpiry=k.expiry||0;klTotal=Math.max(60000,klExpiry-Date.now());if(!klTimer&&klExpiry)klTimer=setInterval(tick,1000);tick();
+}
+
+/* ---------- 其它 ---------- */
+function openDesktop(){
+  if(!S.vncPort){toast("没有映射浏览器桌面端口");return}
+  window.open(`http://${location.hostname}:${S.vncPort}/easycc.html?name=${encodeURIComponent(S.instance||"")}&password=${encodeURIComponent(S.vncPassword||"")}`,"_blank");
+}
+async function openInEnv(){
+  let u=$("openUrl").value.trim();if(!u)return;if(!/^https?:\/\//.test(u))u="https://"+u;
+  const r=await api("/api/browser/open",{url:u});toast(r.message);if(r.ok){$("openUrl").value="";openDesktop()}
+}
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="openUrl")openInEnv()});
+let HA={};
+async function loadHost(){
+  try{HA=await api("/api/hostaccess")}catch(e){return}
+  const on=HA.enabled;$("haTag").className="tag "+(on?"c-ok":"c-mute");$("haTag").textContent=on?(HA.ssh?"已授权 · 含 SSH":"已授权"):"未授权";
+  $("haBtn").textContent=on?"撤销授权":"一键授权访问本机";$("haBtn").className=on?"btn":"btn pri";
+  $("haInfo").style.display=on?"":"none";$("haSshRow").style.display=on?"flex":"none";
+  $("haSshBtn").textContent=HA.ssh?"撤销 SSH":"允许";$("haSshBtn").className=HA.ssh?"btn":"btn danger";
+  if(on)$("haInfo").innerHTML=`<div>本机地址</div><div>host.internal（${esc(HA.hostIP)}）${HA.hostOS?" · "+esc(HA.hostOS):""}</div>
+    <div>用法</div><div>http://host.internal:3000 → 电脑本机 localhost:3000</div>
+    <div>本地证书</div><div>${(HA.certs||[]).length} 张已导入（系统、浏览器、Node、Python 都认）</div>
+    ${HA.ssh?`<div>SSH</div><div>ssh host　（本机用户 ${esc(HA.hostUser||"")}）</div>`:""}`;
+}
+async function toggleHost(){
+  const on=!HA.enabled;
+  if(on&&!confirm("授权这个环境访问你电脑本机上的服务（localhost 上的端口）？随时可以撤销。"))return;
+  const b=$("haBtn");b.disabled=true;b.innerHTML='<span class="spin"></span> 处理中';
+  try{const r=await api("/api/hostaccess",{access:on});toast(r.message)}finally{b.disabled=false;loadHost()}
+}
+async function toggleSsh(){
+  const on=!HA.ssh;
+  if(on&&!confirm("允许环境里的程序（包括 Agent）用 SSH 登录你的电脑并执行命令？这个权限很大，只在需要时打开，用完记得撤销。"))return;
+  const b=$("haSshBtn");b.disabled=true;
+  try{const r=await api("/api/hostaccess",{ssh:on});toast(r.message)}finally{b.disabled=false;loadHost()}
+}
+async function doReset(scope,q){
+  if(!confirm(q))return;
+  $("resetMsg").innerHTML='<span class="spin"></span> 处理中…';document.querySelectorAll(".rcard .btn").forEach(b=>b.disabled=true);
+  try{const r=await api("/api/reset",{scope});$("resetMsg").innerHTML=`<span class="${r.ok?"c-ok":"c-bad"}">${r.ok?"✓":"✗"} ${esc(r.message)}</span>`;toast(r.message)}
+  catch(e){$("resetMsg").textContent="操作失败"}
+  document.querySelectorAll(".rcard .btn").forEach(b=>b.disabled=false);loadStatus();
+}
+document.addEventListener("click",e=>{const c=e.target.closest(".cmd");if(c&&navigator.clipboard)navigator.clipboard.writeText(c.textContent).then(()=>toast("已复制命令"))});
+fetch("/api/appstore-qr.svg").then(r=>r.text()).then(t=>{$("asQR").innerHTML=t});
+loadStatus().then(()=>{tickClock();checkEnv()});loadHost();
+let tab=location.hash.slice(1);if(!tab){try{tab=localStorage.getItem("cbox-tab")||"ov"}catch(e){tab="ov"}}
+if(!["ov","ag","net","proj","kl","mt"].includes(tab))tab="ov";if(tab!=="ov")go(tab);
+setInterval(loadStatus,30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""easyCC 虚拟机里的宿主机通信代理（vsock）。Mac 上的 easycc-vm 每个连接先发一行命令：
+  DOCKER            → 转到 /var/run/docker.sock（Mac 上的 docker 命令经它操作虚拟机里的 Docker）
+  TCP <端口>         → 转到虚拟机 127.0.0.1:<端口>
+  POWEROFF          → 停掉所有容器后关机
+vsock 只有宿主机能连，不对外开放。"""
+import os
+import socket
+import subprocess
+import threading
+
+PORT = 1024
+
+
+def pipe(a, b, done):
+    """a → b 单向搬运。a 读到头只关 b 的写方向（半关闭），另一个方向照常：docker attach 要靠这个拿到输出"""
+    try:
+        while True:
+            d = a.recv(65536)
+            if not d:
+                break
+            b.sendall(d)
+    except OSError:
+        pass
+    try:
+        b.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+    done()
+
+
+def join(c, t):
+    left = [2]
+    lock = threading.Lock()
+
+    def done():
+        with lock:
+            left[0] -= 1
+            last = left[0] == 0
+        if last:
+            c.close()
+            t.close()
+    threading.Thread(target=pipe, args=(c, t, done), daemon=True).start()
+    pipe(t, c, done)
+
+
+def handle(c):
+    try:
+        line = b""
+        while not line.endswith(b"\n") and len(line) < 256:
+            ch = c.recv(1)
+            if not ch:
+                return c.close()
+            line += ch
+        cmd = line.decode().split()
+        if cmd[:1] == ["DOCKER"]:
+            t = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            t.connect("/var/run/docker.sock")
+        elif cmd[:1] == ["TCP"] and len(cmd) == 2 and cmd[1].isdigit():
+            t = socket.create_connection(("127.0.0.1", int(cmd[1])), 10)
+            t.settimeout(None)
+            t.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        elif cmd[:1] == ["POWEROFF"]:
+            try:                      # 对方可能已经断开，回复失败也要关机
+                c.sendall(b"OK\n")
+                c.close()
+            except OSError:
+                pass
+            print("收到关机请求：停容器、关机", flush=True)
+            subprocess.run("docker ps -q | xargs -r docker stop -t 10; sync", shell=True, timeout=120)
+            os.system("poweroff -f")
+            return
+        else:
+            return c.close()
+    except (OSError, IndexError, UnicodeDecodeError):
+        return c.close()
+    join(c, t)
+
+
+def main():
+    s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((socket.VMADDR_CID_ANY, PORT))
+    s.listen(256)
+    print("vsock 代理已监听 %d" % PORT, flush=True)
+    while True:
+        try:
+            conn, _ = s.accept()
+        except OSError as e:
+            print("accept 出错：%s" % e, flush=True)
+            continue
+        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+
+if __name__ == "__main__":
+    main()

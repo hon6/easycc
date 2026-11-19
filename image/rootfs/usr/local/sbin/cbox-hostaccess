@@ -1,0 +1,124 @@
+#!/bin/bash
+# 访问本机（宿主机）授权，root 运行。配置在 /etc/cbox/config.env：
+#   HOST_ACCESS=1   第 1 档：环境里访问 host.internal:端口 → 电脑本机的 localhost:端口；并导入电脑的本地证书
+#   HOST_SSH=1      第 2 档：环境里 `ssh host` 登录电脑本机（用专用密钥，撤销即作废）
+# 用法：cbox-hostaccess sync [--wait] | status
+set -uo pipefail
+CONF=/etc/cbox/config.env
+RUN=/run/cbox
+CA_SRC=/etc/cbox/ca                     # 电脑端导出的本地证书（mkcert、钥匙串里自己装的根证书等）
+CA_DST=/usr/local/share/ca-certificates/cbox
+TAG="# cbox-host"
+LOG() { echo "[cbox-hostaccess] $*" >&2; }
+[ -f "$CONF" ] && { set -a; . "$CONF"; set +a; }
+
+host_ip() {
+  # Docker Desktop：host.docker.internal；Apple container / Linux：默认网关就是宿主机
+  local ip
+  # 只查 /etc/hosts（Docker 用 --add-host 写在这里）；不能走 DNS：环境的 DNS 由 mihomo 接管，会回假 IP
+  ip="$(awk '!/cbox-host/ && $1 !~ /^#/ { for (i = 2; i <= NF; i++) if ($i == "host.docker.internal") { print $1; exit } }' /etc/hosts)"   # Docker 写的是制表符分隔
+  [ -n "$ip" ] || ip="$(ip -4 route show default | awk '{print $3; exit}')"
+  echo "$ip"
+}
+
+set_policy_certs() {
+  # 浏览器策略里装上 / 去掉这些证书（Firefox、Chrome）
+  local list p
+  list="$(ls "$CA_SRC"/*.crt "$CA_SRC"/*.pem 2>/dev/null | jq -R . | jq -s .)"
+  [ "$1" = off ] && list='[]'
+  for p in /etc/firefox/policies/policies.json /usr/lib/firefox/distribution/policies.json; do
+    [ -f "$p" ] || continue
+    jq --argjson l "$list" 'if ($l|length)>0 then .policies.Certificates={Install:$l} else del(.policies.Certificates) end' "$p" > "$p.tmp" && mv "$p.tmp" "$p"
+  done
+  # Chrome：CACertificates 要的是 DER 的 base64（PEM 去掉首尾行就是）
+  p=/etc/opt/chrome/policies/managed/easycc.json
+  if [ -f "$p" ]; then
+    local ders='[]' f
+    if [ "$1" != off ]; then
+      ders="$(for f in "$CA_SRC"/*.crt "$CA_SRC"/*.pem; do [ -f "$f" ] && awk '/BEGIN CERT/{c=1;b="";next}/END CERT/{print b;c=0;next}c{b=b $0}' "$f"; done | jq -R . | jq -s 'map(select(length>0))')"
+    fi
+    jq --argjson l "$ders" 'if ($l|length)>0 then .CACertificates=$l else del(.CACertificates) end' "$p" > "$p.tmp" && mv "$p.tmp" "$p"
+  fi
+}
+
+install_certs() {
+  rm -rf "$CA_DST"; mkdir -p "$CA_DST"
+  local f n=0
+  for f in "$CA_SRC"/*.crt "$CA_SRC"/*.pem; do
+    [ -f "$f" ] || continue
+    grep -q "BEGIN CERTIFICATE" "$f" || continue
+    cp "$f" "$CA_DST/$(basename "${f%.*}").crt"; n=$((n+1))
+  done
+  update-ca-certificates >/dev/null 2>&1
+  set_policy_certs on
+  echo "$n"
+}
+
+remove_certs() {
+  [ -d "$CA_DST" ] || return 0
+  rm -rf "$CA_DST"; update-ca-certificates --fresh >/dev/null 2>&1
+  set_policy_certs off
+}
+
+enable() {
+  [ -n "${HOST_RELAY_PORT:-}" ] || { LOG "缺 HOST_RELAY_PORT（请用新版 easycc 重启环境）"; return 1; }
+  local hip; hip="$(host_ip)"
+  [ -n "$hip" ] || { LOG "找不到宿主机地址"; return 1; }
+  echo "$hip" > "$RUN/hostip"; chmod 644 "$RUN/hostip"
+  # host.internal 解析到宿主机
+  sed -i "/$TAG\$/d" /etc/hosts 2>/dev/null || { grep -v "$TAG\$" /etc/hosts > /tmp/hosts.new; cat /tmp/hosts.new > /etc/hosts; }
+  echo "$hip host.internal $TAG" >> /etc/hosts
+  grep -v "$TAG" /etc/hosts | grep -q " host\.docker\.internal" || echo "$hip host.docker.internal $TAG" >> /etc/hosts
+  # 防火墙：发往宿主机的 TCP 透明转到本机中转（127.0.0.1:7683）；只有 root（中转程序）能直连宿主机的中转端口
+  iptables -w -t nat -F CBOX_HOST 2>/dev/null || return 1
+  iptables -w -t nat -A CBOX_HOST -d "$hip" -p tcp --dport "$HOST_RELAY_PORT" -m owner --uid-owner 0 -j ACCEPT
+  iptables -w -t nat -A CBOX_HOST -d "$hip" -p tcp -j REDIRECT --to-ports 7683
+  iptables -w -F CBOX_HOST
+  iptables -w -A CBOX_HOST -d "$hip" -p tcp --dport "$HOST_RELAY_PORT" -m owner --uid-owner 0 -j ACCEPT
+  # 本地证书：电脑端客户端授权后几秒内导出到 /etc/cbox/ca
+  local i n
+  # 刚授权时等电脑端导出证书（几秒）；开机同步时证书早就在了（存在实例配置目录里），不等
+  [ "${WAIT:-0}" = 1 ] && for i in $(seq 1 20); do [ -f "$CA_SRC/.ready" ] && break; sleep 0.5; done
+  n="$(install_certs)"
+  LOG "已授权访问本机：host.internal → ${hip}（导入本地证书 $n 张）"
+}
+
+disable() {
+  iptables -w -t nat -F CBOX_HOST 2>/dev/null; iptables -w -F CBOX_HOST 2>/dev/null
+  rm -f "$RUN/hostip"
+  sed -i "/$TAG\$/d" /etc/hosts 2>/dev/null || { grep -v "$TAG\$" /etc/hosts > /tmp/hosts.new; cat /tmp/hosts.new > /etc/hosts; }
+  remove_certs
+}
+
+ssh_on() {
+  local h=/home/dev
+  if [ ! -f "$h/.ssh/cbox_host" ]; then
+    runuser -u dev -- bash -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keygen -q -t ed25519 -N "" -C "easycc@$(hostname)" -f ~/.ssh/cbox_host'
+  fi
+  cp "$h/.ssh/cbox_host.pub" /etc/cbox/host_ssh.pub
+  local user; user="$(jq -r '.user // empty' /etc/cbox/host.json 2>/dev/null)"
+  runuser -u dev -- bash -c "touch ~/.ssh/config; sed -i '/^# cbox-host-ssh begin/,/^# cbox-host-ssh end/d' ~/.ssh/config
+    printf '%s\n' '# cbox-host-ssh begin' 'Host host' '  HostName host.internal' '  User ${user:-\$USER}' '  IdentityFile ~/.ssh/cbox_host' \
+      '  IdentitiesOnly yes' '  StrictHostKeyChecking accept-new' '# cbox-host-ssh end' >> ~/.ssh/config; chmod 600 ~/.ssh/config"
+}
+
+ssh_off() {
+  rm -f /etc/cbox/host_ssh.pub
+  runuser -u dev -- bash -c "[ -f ~/.ssh/config ] && sed -i '/^# cbox-host-ssh begin/,/^# cbox-host-ssh end/d' ~/.ssh/config; true"
+}
+
+case "${1:-sync}" in
+  sync)
+    [ "${2:-}" = --wait ] && WAIT=1
+    if [ "${HOST_ACCESS:-0}" = 1 ]; then enable || exit 1; else disable; fi
+    if [ "${HOST_ACCESS:-0}" = 1 ] && [ "${HOST_SSH:-0}" = 1 ]; then ssh_on; else ssh_off; fi
+    /usr/local/sbin/cbox-agentenv refresh 2>/dev/null || true   # easycc-env 里的「访问电脑」跟着变
+    if pgrep -u dev -f '/usr/lib/firefox/firefox-bin|/opt/google/chrome/chrome( |$)' >/dev/null; then /usr/local/sbin/cbox-userland restart-browser >/dev/null 2>&1; fi
+    exit 0 ;;
+  status)
+    jq -n --arg on "${HOST_ACCESS:-0}" --arg ssh "${HOST_SSH:-0}" --arg ip "$(cat "$RUN/hostip" 2>/dev/null)" \
+      --argjson certs "$(ls "$CA_DST" 2>/dev/null | jq -R . | jq -s .)" --arg user "$(jq -r '.user // empty' /etc/cbox/host.json 2>/dev/null)" \
+      --arg os "$(jq -r '.os // empty' /etc/cbox/host.json 2>/dev/null)" \
+      '{enabled:($on=="1"), ssh:($ssh=="1"), hostIP:$ip, certs:$certs, hostUser:$user, hostOS:$os}' ;;
+  *) echo "用法: $0 sync | status" >&2; exit 2 ;;
+esac
