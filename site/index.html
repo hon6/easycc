@@ -50,6 +50,8 @@ h1{font-size:clamp(34px,4.9vw,62px);line-height:1.14;font-weight:650;letter-spac
 .lede{font-size:clamp(16px,1.3vw,18px);color:var(--mute)}
 .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
 .facts{margin-top:16px;font-size:14px;color:var(--dim)}
+.facts a,.faq p a{color:var(--mute);text-underline-offset:3px}
+.facts a:hover,.faq p a:hover{color:#fff}
 .stage{margin-top:clamp(32px,5vw,64px);min-width:0}
 .screen{border-radius:14px;border:1px solid var(--line-strong);overflow:hidden;background:#151517;box-shadow:0 40px 90px -30px rgba(0,0,0,.9)}
 .screen img{width:100%}
@@ -207,7 +209,7 @@ footer .sp{flex:1}
 <header class="top"><div class="wrap">
   <a class="logo" href="#top" aria-label="easyCC 首页"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M12 7v10M7.5 9.5 12 12l4.5-2.5" opacity=".7"/></svg>easyCC</a>
   <nav aria-label="页内导航">
-    <a href="#how">原理</a><a href="#features">功能</a><a href="#guide">用法</a><a href="#cli">命令行</a><a href="#faq">常见问题</a>
+    <a href="#how">原理</a><a href="#features">功能</a><a href="#guide">用法</a><a href="#cli">命令行</a><a href="#faq">常见问题</a><a href="https://github.com/hon6/easycc" rel="noopener">GitHub</a>
   </nav>
   <a class="btn solid sm" href="#download">下载</a>
 </div></header>
@@ -222,7 +224,7 @@ footer .sp{flex:1}
       <a class="btn solid" id="heroDl" href="#download">免费下载</a>
       <a class="btn" href="#guide">看看怎么用</a>
     </div>
-    <p class="facts">开源、免费，不用注册账号。支持 macOS、Windows 和 Linux。</p>
+    <p class="facts">开源、免费，不用注册账号。支持 macOS、Windows 和 Linux。源码在 <a href="https://github.com/hon6/easycc" rel="noopener">GitHub</a>。</p>
     </div>
   </div>
   <div class="stage">
@@ -475,7 +477,7 @@ cd easycc-linux-* &amp;&amp; ./install.sh</pre></div>
 <section id="faq"><div class="wrap">
   <div class="sec-head"><h2>常见问题</h2></div>
   <div class="faq">
-    <details><summary>easyCC 收费吗？</summary><p>不收费，代码开源。安装和使用都不需要注册账号。</p></details>
+    <details><summary>easyCC 收费吗？</summary><p>不收费。代码以 MIT 协议开源，放在 <a href="https://github.com/hon6/easycc" rel="noopener">github.com/hon6/easycc</a>。安装和使用都不需要注册账号。</p></details>
     <details><summary>代理要自己准备吗？</summary><p>要。easyCC 不提供代理，你在代理库里填自己的 socks5 或 http 代理。</p></details>
     <details><summary>我的代码会被上传吗？</summary><p>不会。项目目录是从你的电脑挂进环境的，代码一直在你自己的硬盘上，环境数据也都存在本机。</p></details>
     <details><summary>环境占多少电脑资源？</summary><p>每个环境默认上限是 4 核、4G 内存，可以改。实际占用按用量来。闲置超过设定时间会自动休眠，内存全部还给电脑。</p></details>
@@ -488,7 +490,7 @@ cd easycc-linux-* &amp;&amp; ./install.sh</pre></div>
 
 <footer><div class="wrap">
   <span>easyCC，开源免费</span><span class="sp"></span>
-  <a href="#how">原理</a><a href="#features">功能</a><a href="#guide">用法</a><a href="#download">下载</a><a href="#faq">常见问题</a>
+  <a href="https://github.com/hon6/easycc" rel="noopener">GitHub</a><a href="https://github.com/hon6/easycc/issues" rel="noopener">反馈问题</a><a href="#how">原理</a><a href="#features">功能</a><a href="#guide">用法</a><a href="#download">下载</a><a href="#faq">常见问题</a>
 </div></footer>
 
 <script>
