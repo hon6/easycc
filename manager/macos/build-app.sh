@@ -41,21 +41,24 @@ echo "==> 原生外壳"
 swiftc -O -target "$APP_ARCH-apple-macos12.0" -o "$APP/Contents/MacOS/EasyCC" "$HERE/manager/macos/EasyCC.swift" -framework Cocoa -framework WebKit
 
 if [ "$APP_ARCH" = arm64 ]; then        # Apple container 只支持 Apple 芯片 + macOS 26
-echo "==> Apple container 运行时（保留苹果签名，不重新签）"
+# 原样带苹果的安装包（它自己是公证过的），不把里面的程序放进 App 包：App 做 Developer ID 签名时包里的程序都会被重签，
+# 而苹果这些程序的网络、虚拟化权限只认苹果的签名，重签就不能用了。启动器首次运行时把它解到「应用程序支持」目录里用。
+echo "==> Apple container 运行时（带苹果的原版安装包，首次启动时解开）"
 pkgutil --expand-full "$CONTAINER_PKG" "$work/pkg"
-cp -R "$work/pkg/Payload" "$R/runtime/container"
-rm -f "$R/runtime/container/bin/uninstall-container.sh" "$R/runtime/container/bin/update-container.sh"
-VMINIT_REF="$("$R/runtime/container/bin/container" system property list 2>/dev/null | awk -F'"' '/^\[vminit\]/{f=1} f&&/^image/{print $2; exit}')"
+CBIN="$work/pkg/Payload/bin/container"
+cp "$CONTAINER_PKG" "$R/runtime/container.pkg"
+shasum -a 256 "$CONTAINER_PKG" | cut -c1-16 > "$R/runtime/container.id"
+VMINIT_REF="$("$CBIN" system property list 2>/dev/null | awk -F'"' '/^\[vminit\]/{f=1} f&&/^image/{print $2; exit}')"
 [ -n "$VMINIT_REF" ] || VMINIT_REF="ghcr.io/apple/containerization/vminit:0.54.0"
 
 echo "==> Linux 内核"
-KBIN="$("$R/runtime/container/bin/container" system property list 2>/dev/null | awk -F'"' '/^binaryPath/{print $2; exit}')"
+KBIN="$("$CBIN" system property list 2>/dev/null | awk -F'"' '/^binaryPath/{print $2; exit}')"
 [ -n "$KBIN" ] || { echo "读不到内核路径" >&2; exit 1; }
 mkdir -p "$work/kata"
 if tar -xf "$KATA_TAR" -C "$work/kata" "./$KBIN" 2>/dev/null || tar -xf "$KATA_TAR" -C "$work/kata" "$KBIN" 2>/dev/null; then
   cp "$work/kata/$KBIN" "$R/runtime/kernel/vmlinux"
-elif [ -f "${KERNEL_BIN:-}" ]; then
-  cp "$KERNEL_BIN" "$R/runtime/kernel/vmlinux"
+elif [ -f "${KERNEL_BIN:-$DL/vmlinux}" ]; then      # 系统自带的 tar 解不了 zstd 时：用事先解好的内核（默认找材料目录里的 vmlinux）
+  cp "${KERNEL_BIN:-$DL/vmlinux}" "$R/runtime/kernel/vmlinux"
 else
   echo "解不开内核包（tar 不支持 zstd？）：用 KERNEL_BIN=已解出的 vmlinux 指定" >&2; exit 1
 fi
@@ -65,7 +68,7 @@ cp "$VMINIT_TAR" "$R/runtime/images/vminit.tar"
 echo "$VMINIT_REF" > "$R/runtime/images/vminit.ref"
 if [ -f "$BUILDER_TAR" ]; then
   cp "$BUILDER_TAR" "$R/runtime/images/builder.tar"
-  "$R/runtime/container/bin/container" system property list 2>/dev/null | awk -F'"' '/^\[build\]/{f=1} f&&/^image/{print $2; exit}' > "$R/runtime/images/builder.ref"
+  "$CBIN" system property list 2>/dev/null | awk -F'"' '/^\[build\]/{f=1} f&&/^image/{print $2; exit}' > "$R/runtime/images/builder.ref"
 fi
 fi
 
@@ -114,23 +117,51 @@ done
 mkdir -p "$SUP/container" "$SUP/logs" "$HOME/.easycc"
 exec 2>>"$SUP/logs/launcher.log"
 echo "---- $(date '+%F %T') 启动 ${1:-}" >&2
-export PATH="$R/runtime/container/bin:$R/python/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export LANG="${LANG:-en_US.UTF-8}"
-[ -d "$R/bin" ] && export PATH="$R/bin:$PATH"
-C="$R/runtime/container/bin/container"
 # Apple container 只在 macOS 26 + Apple 芯片上用；更早的系统用自带虚拟机（启动环境时才开）
 MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
+# 运行时放在「应用程序支持」目录里：App 包里带的是苹果的原版安装包，解出来的程序保持苹果的签名。
+# 首次启动、或者 App 更新后带的安装包变了，就重新解一次（十来秒）。
+RT="$SUP/runtime/container"
+if [ -f "$R/runtime/container.pkg" ] && [ "$(uname -m)" = arm64 ] && [ "$MAJOR" -ge 26 ] \
+   && [ "$(cat "$RT/.pkg-id" 2>/dev/null)" != "$(cat "$R/runtime/container.id" 2>/dev/null)" ]; then
+  echo "解开容器运行时（首次启动或 App 更新后）" >&2
+  tmp="$SUP/runtime/.expand.$$"; rm -rf "$tmp" "$RT.new"; mkdir -p "$SUP/runtime"
+  if /usr/sbin/pkgutil --expand-full "$R/runtime/container.pkg" "$tmp" >&2 && [ -x "$tmp/Payload/bin/container" ]; then
+    mv "$tmp/Payload" "$RT.new"
+    rm -f "$RT.new/bin/uninstall-container.sh" "$RT.new/bin/update-container.sh"
+    xattr -dr com.apple.quarantine "$RT.new" 2>/dev/null
+    cp "$R/runtime/container.id" "$RT.new/.pkg-id"
+    # 旧版本的服务还在跑：先停掉再换文件（运行中的环境会停，App 更新运行时才会走到这里）
+    [ -x "$RT/bin/container" ] && "$RT/bin/container" system stop >&2
+    rm -rf "$RT"; mv "$RT.new" "$RT"
+  else
+    echo "容器运行时解包失败" >&2
+  fi
+  rm -rf "$tmp"
+fi
+export PATH="$RT/bin:$R/python/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+[ -d "$R/bin" ] && export PATH="$R/bin:$PATH"
+C="$RT/bin/container"
 if [ -x "$C" ] && [ "$(uname -m)" = arm64 ] && [ "$MAJOR" -ge 26 ]; then
+  # 服务是别的位置的程序注册的（0.9.2 以前运行时在 App 包里）：那些文件已经不在了，停掉，下面按现在的位置重新注册
+  P="$SUP/container/apiserver/apiserver.plist"
+  if [ -f "$P" ] && [ "$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$P" 2>/dev/null)" != "$RT/bin/container-apiserver" ]; then
+    echo "容器服务注册的是旧位置，重新注册" >&2
+    "$C" system stop >&2
+    launchctl bootout "user/$(id -u)/com.apple.container.apiserver" 2>/dev/null
+    launchctl bootout "gui/$(id -u)/com.apple.container.apiserver" 2>/dev/null
+    rm -f "$P"
+  fi
   if ! "$C" system status >/dev/null 2>&1; then
     # 服务装到「用户」域（user/UID）：从 App 里启动默认进图形会话域，那里的后台服务读不了外置盘，存储位置在外置盘时会起不来
-    P="$SUP/container/apiserver/apiserver.plist"
     if [ -f "$P" ]; then
       launchctl bootout "gui/$(id -u)/com.apple.container.apiserver" 2>/dev/null
       launchctl bootstrap "user/$(id -u)" "$P" 2>/dev/null
       for i in 1 2 3 4 5 6 7 8 9 10; do "$C" system status >/dev/null 2>&1 && break; sleep 1; done
     fi
     # 第一次用（还没有 plist），或者上面没起来：让 container 自己装，它会写好 plist 并补齐其余服务
-    "$C" system start --install-root "$R/runtime/container" --app-root "$SUP/container" --log-root "$SUP/logs" \
+    "$C" system start --install-root "$RT" --app-root "$SUP/container" --log-root "$SUP/logs" \
       --disable-kernel-install --timeout 90 >&2 || echo "容器运行时启动失败" >&2
   fi
   # 内核：已经装过会报「已存在」，忽略
@@ -141,7 +172,8 @@ if [ -x "$C" ] && [ "$(uname -m)" = arm64 ] && [ "$MAJOR" -ge 26 ]; then
   fi
 fi
 [ "${1:-}" = --runtime-only ] && { "$C" system status >/dev/null 2>&1 || [ "$MAJOR" -lt 26 ]; exit; }
-exec "$R/python/bin/python3" -I "$R/app/manager/cbox_manager.py" "$@"
+# 编译缓存（__pycache__）放到应用程序支持目录：往 App 包里写文件会让签名失效
+exec "$R/python/bin/python3" -I -X pycache_prefix="$SUP/pycache" "$R/app/manager/cbox_manager.py" "$@"
 LAUNCH
 chmod +x "$R/bin/easycc-server"
 

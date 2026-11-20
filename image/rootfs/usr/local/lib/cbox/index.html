@@ -691,11 +691,29 @@ async function loadKiteline(renew){
     <div class="bar"><i id="klBar"></i></div><div class="hint mono" id="klLeft" style="margin-top:6px"></div>
     <div class="row"><button class="btn" onclick="loadKiteline(true)">换一个码</button></div></div></div>
     <div class="kv" style="margin-top:18px"><div>远程连接</div><div>${esc(r.state||"—")}${r.relay?" · "+esc(r.relay):""}</div>
-      <div>版本</div><div>Kiteline ${esc(k.version)} · 会话 ${k.sessions}</div><div>在线设备</div><div>${online} / ${devs.length}</div></div>
+      <div>版本</div><div>Kiteline ${esc(k.version)} · 会话 ${k.sessions}</div><div>在线设备</div><div>${online} / ${devs.length}</div>
+      <div>更新</div><div>${klUpdHTML(k.update)}</div></div>
     ${devs.length?`<ul class="checks" style="margin-top:12px">${devs.map(d=>`<li><span class="dot d-${d.online?"pass":"idle"}"></span><span>${esc(d.name)}</span><span class="hint">${d.online?"在线":"离线"}${d.via?" · "+esc(d.via):""}</span></li>`).join("")}</ul>`:""}
     <div class="hint" style="margin-top:12px">容器不在你的局域网里，手机经 Kiteline 远程连接（中继）连进来，同样走这里的代理出口。${k.remoteEnabled===false?'<span class="c-warn">远程连接未开启，手机连不进容器。</span>':""}</div>`;
   klExpiry=k.expiry||0;klTotal=Math.max(60000,klExpiry-Date.now());if(!klTimer&&klExpiry)klTimer=setInterval(tick,1000);tick();
 }
+
+// Kiteline 的更新状态：自动更新开着时不用管；想马上更新可以自己点
+function klUpdHTML(u){
+  if(!u||u.phase==="unknown")return'<span class="hint">这一版 Kiteline 还不能自己更新，重新构建环境镜像会装上最新版</span>';
+  if(!u.supported)return`<span class="hint">${esc(u.reason||"这份 Kiteline 不支持自动更新")}</span>`;
+  const pct=u.size?Math.min(100,Math.round(u.received/u.size*100)):0,v=esc(u.version||"");
+  const text={none:"已是最新版本",idle:"还没检查过",checking:"正在检查…",available:`有新版本 ${v}`,downloading:`正在下载 ${v}${pct?"，"+pct+"%":""}`,
+    installing:`正在安装 ${v}`,ready:`${v} 已装好，重启 Kiteline 后生效`,restarting:"正在重启 Kiteline…",error:`更新没成功：${esc(u.error||"原因不明")}`}[u.phase]||esc(u.phase);
+  const btn=u.phase==="available"||(u.phase==="error"&&u.version)?'<button class="btn" onclick="klUpd(\'start\')">现在更新</button>'
+    :u.phase==="ready"?'<button class="btn" onclick="klUpd(\'restart\')">现在重启</button>'
+    :["none","idle","error"].includes(u.phase)?'<button class="btn" onclick="klUpd(\'check\')">检查更新</button>':"";
+  if(["checking","downloading","installing","restarting"].includes(u.phase))setTimeout(()=>{if($("klBody")&&document.querySelector('.tab.on[data-t="kl"]'))loadKiteline(false)},4000);
+  return`<div class="row" style="gap:10px;flex-wrap:wrap"><span>${text}</span>${btn}</div>
+    <label class="row" style="gap:8px;margin-top:6px;cursor:pointer"><input type="checkbox" ${u.auto?"checked":""} onchange="klUpd('auto',{on:this.checked})" style="accent-color:#f2f3f5">
+      <span class="hint">有新版本自动下载安装，等手机断开后重启生效</span></label>${u.note?`<div class="hint" style="margin-top:4px">${esc(u.note)}</div>`:""}`}
+async function klUpd(a,b){let r;try{r=await api("/api/kiteline/update/"+a,b||{})}catch(e){toast("没有成功，稍后再试");return}
+  if(r.message)toast(r.message);else if(a==="auto")toast(b&&b.on?"已打开自动更新":"已关闭自动更新");loadKiteline(false)}
 
 /* ---------- 其它 ---------- */
 function openDesktop(){

@@ -23,16 +23,29 @@ start_desktop() {
   as_dev Xtigervnc :1 -geometry "$SCREEN" -depth 24 -rfbport 5901 -localhost \
     -rfbauth "$H/.vnc/passwd" -AlwaysShared -AcceptSetDesktopSize -dpi 96 >>"$RUN/vnc.log" 2>&1
   for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X1 ] && break; sleep 0.2; done
-  as_dev env CBOX_AUTOSTART_BROWSER="$AUTOSTART_BROWSER" bash -lc 'exec dbus-launch --exit-with-session openbox-session' >>"$RUN/openbox.log" 2>&1
+  as_dev env CBOX_AUTOSTART_BROWSER="$AUTOSTART_BROWSER" "${KL_ENV[@]}" bash -lc 'exec dbus-launch --exit-with-session openbox-session' >>"$RUN/openbox.log" 2>&1
   # 浏览器常驻（openbox 自启动之外再保一道；只会跑一份）
   [ "$AUTOSTART_BROWSER" = 1 ] && { sleep 2; as_dev /usr/local/bin/cbox-browser-keeper; }
+}
+
+# Kiteline 的更新地址和依赖源：一般不用设（自建镜像站或测试时在 config.env 里写 KITELINE_UPDATE_URL / PIP_INDEX_URL）。
+# 桌面的自启动项和下面的 start_kiteline 都可能把它拉起来，两条路都带上
+KL_ENV=(KITELINE_HOME=/opt/kiteline)
+[ -n "${KITELINE_UPDATE_URL:-}" ] && KL_ENV+=(KITELINE_UPDATE_URL="$KITELINE_UPDATE_URL")
+[ -n "${PIP_INDEX_URL:-}" ] && KL_ENV+=(PIP_INDEX_URL="$PIP_INDEX_URL")
+
+# 之前自动更新过的 Kiteline 存在用户目录里（kiteline_update.py）：比镜像里的新就先换上，重建容器后不用重新下载。
+# 要赶在桌面起来之前做：桌面的自启动项（~/.config/autostart/kiteline.desktop）会先把 Kiteline 拉起来
+restore_kiteline() {
+  [ -x /usr/local/bin/kiteline ] || return 0
+  python3 -I /usr/local/lib/cbox/kiteline_update.py restore 2>&1 || true
 }
 
 start_kiteline() {
   [ -x /usr/local/bin/kiteline ] || return 0
   pgrep -u dev -f 'python.* -m kiteline' >/dev/null && return 0
   LOG "启动 Kiteline（无界面模式）"
-  as_dev bash -lc 'exec kiteline --headless' >>"$RUN/kiteline.log" 2>&1
+  as_dev env "${KL_ENV[@]}" bash -lc 'exec kiteline --headless' >>"$RUN/kiteline.log" 2>&1
 }
 
 start_agents() {
@@ -44,6 +57,7 @@ start_all() {
   [ -f "$H/.profile" ] || cp -a --update=none /opt/dev-skel/. "$H/" 2>/dev/null || cp -an /opt/dev-skel/. "$H/"
   chown dev "$H" 2>/dev/null || true
   set_engine
+  restore_kiteline
   start_desktop
   start_kiteline
   start_agents

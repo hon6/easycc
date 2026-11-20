@@ -639,7 +639,122 @@ def kiteline(renew=False):
         return {"installed": True, "running": True, "starting": True, "error": str(exc)}
     return {"installed": True, "running": True, "code": pair.get("code"), "expiry": pair.get("expiry"), "qr": pair.get("qr", ""),
             "link": pair.get("link", ""), "remote": st.get("remote") or {}, "remoteEnabled": st.get("remoteEnabled"),
-            "devices": st.get("devices") or [], "version": st.get("version", ""), "sessions": len(st.get("sessions") or [])}
+            "devices": st.get("devices") or [], "version": st.get("version", ""), "sessions": len(st.get("sessions") or []),
+            "update": kiteline_update_info()}
+
+
+# ---- Kiteline 自动更新 ----
+# Kiteline 自己会查新版本、下载、装依赖、换文件、重启（它的 updater.py），只是要有人点「更新」「重启」。环境里没人点，
+# 这里替用户点：每 10 分钟看一眼，有新版本就让它下载安装；装好后等手机都断开了再重启（有手机连着最多等 12 小时）。
+# 更新后的版本存一份到用户目录（kiteline_update.py），重建容器后直接换上，不用每次重新下载。
+# 配置 KITELINE_AUTO_UPDATE=0 关掉（环境后台「手机 · Kiteline」页的开关）。
+_kl_auto = {"readyAt": 0, "restartAt": 0, "note": "", "at": 0}
+
+
+def kiteline_auto_on():
+    return conf().get("KITELINE_AUTO_UPDATE", "1") != "0"
+
+
+def kiteline_update_info():
+    """给页面看的：现在什么版本、有没有新版本、进行到哪一步"""
+    info = {"auto": kiteline_auto_on(), "note": _kl_auto["note"]}
+    try:
+        st = kiteline_call("/api/desktop/update")
+    except Exception:  # noqa: BLE001  老版本没有这个接口
+        return dict(info, supported=False, phase="unknown")
+    return dict(info, supported=bool(st.get("supported")), reason=st.get("reason", ""), phase=st.get("phase", ""), current=st.get("current", ""),
+                version=st.get("version", ""), size=st.get("size", 0), received=st.get("received", 0), error=st.get("error", ""),
+                checkedAt=st.get("checkedAt", 0))
+
+
+def kiteline_update_action(action, body=None):
+    """页面上点的：check 现在查、start 下载安装、restart 重启换上、auto 开关自动更新"""
+    if action == "auto":
+        write_conf({"KITELINE_AUTO_UPDATE": "1" if (body or {}).get("on") else "0"})
+        return {"ok": True, "update": kiteline_update_info()}
+    if action not in ("check", "start", "restart"):
+        return {"ok": False, "message": "未知操作"}
+    try:
+        r = kiteline_call("/api/desktop/update/" + action, {})
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "message": "Kiteline 没有回应：%s" % exc}
+    if action == "restart" and r.get("ok", True) and not r.get("error"):
+        _kl_auto["restartAt"] = time.time()
+    return {"ok": not r.get("error") and r.get("ok", True) is not False, "message": r.get("error", ""), "update": kiteline_update_info()}
+
+
+def _kl_log(msg):
+    _kl_auto["note"], _kl_auto["at"] = msg, time.time()
+    print("[cbox-kiteline %s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
+
+
+def kiteline_auto_tick():
+    import kiteline_update
+    if not os.path.exists("/usr/local/bin/kiteline"):
+        return
+    running = sh(["pgrep", "-u", "dev", "-f", "python.* -m kiteline"])[0] == 0
+    if not running:
+        # 更新重启时它自己会起来；两分钟还没起来（换文件失败之类）就按平时的方式拉起
+        if _kl_auto["restartAt"] and 120 < time.time() - _kl_auto["restartAt"] < 1800:
+            _kl_auto["restartAt"] = 0
+            subprocess.Popen(["setsid", "runuser", "-u", "dev", "--", "bash", "-lc", "exec kiteline --headless"],
+                             stdin=subprocess.DEVNULL, stdout=open(os.path.join(RUN, "kiteline.log"), "a"), stderr=subprocess.STDOUT)
+            _kl_log("更新后 Kiteline 没有自己起来，已重新启动")
+        return
+    kiteline_update.snapshot(_kl_log)          # 更新过了还没存：存一份（没变化时什么都不做）
+    if not kiteline_auto_on():
+        return
+    try:
+        st = kiteline_call("/api/desktop/update")
+    except Exception:  # noqa: BLE001
+        return
+    phase = st.get("phase")
+    if phase != "ready":
+        _kl_auto["readyAt"] = 0
+    if not st.get("supported"):
+        return
+    if phase in ("idle", "error"):
+        # Kiteline 启动 30 秒后查第一次，那时外网多半还没放行；它自己一小时后才再查，这里替它早点再查一次
+        try:
+            st = kiteline_call("/api/desktop/update/check", {})
+            phase = st.get("phase")
+        except Exception:  # noqa: BLE001
+            return
+    if phase == "available":
+        kiteline_call("/api/desktop/update/start", {})
+        _kl_log("发现 Kiteline %s（当前 %s），开始下载安装" % (st.get("version"), st.get("current")))
+    elif phase == "ready":
+        _kl_auto["readyAt"] = _kl_auto["readyAt"] or time.time()
+        try:
+            online = [d for d in (kiteline_call("/api/desktop/status").get("devices") or []) if d.get("online")]
+        except Exception:  # noqa: BLE001
+            online = []
+        waited = time.time() - _kl_auto["readyAt"]
+        if online and waited < 12 * 3600:
+            _kl_auto["note"] = "Kiteline %s 已装好，等手机断开后重启生效" % st.get("version")
+            return
+        r = kiteline_call("/api/desktop/update/restart", {})
+        if r.get("ok", True) is not False and not r.get("error"):
+            _kl_auto["restartAt"] = time.time()
+            _kl_log("Kiteline 重启以换上 %s" % st.get("version"))
+    elif phase == "error" and st.get("error"):
+        _kl_auto["note"] = "Kiteline 更新没成功：%s（一小时后自动重试）" % st.get("error")
+
+
+def _kiteline_auto_loop():
+    time.sleep(75)                             # Kiteline 启动 30 秒后才第一次查新版本
+    while True:
+        try:
+            kiteline_auto_tick()
+        except Exception as exc:  # noqa: BLE001  自动更新出错不影响后台
+            print("[cbox-kiteline] 自动更新检查出错：%s" % exc, flush=True)
+        # 下载、安装、等重启的时候查得勤一点，平时 10 分钟一次
+        busy = _kl_auto["restartAt"] and time.time() - _kl_auto["restartAt"] < 1800
+        try:
+            busy = busy or kiteline_call("/api/desktop/update").get("phase") in ("available", "downloading", "installing", "ready")
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(30 if busy else 600)
 
 
 _qr_cache = {}
@@ -801,6 +916,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, browser_open(body.get("url", "")))
         if u.path == "/api/kiteline/renew":
             return self.send(200, kiteline(True))
+        m = re.match(r"^/api/kiteline/update/(check|start|restart|auto)$", u.path)
+        if m:
+            return self.send(200, kiteline_update_action(m.group(1), body))
         m = re.match(r"^/api/agents/([a-z0-9-]+)/(install|uninstall|default)$", u.path)
         if m:
             if m.group(2) == "default":
@@ -816,4 +934,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     token()
+    threading.Thread(target=_kiteline_auto_loop, daemon=True, name="kiteline-auto").start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

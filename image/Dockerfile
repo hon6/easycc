@@ -136,6 +136,9 @@ RUN set -eux; arch="$(dpkg --print-architecture)"; \
     if [ -n "$PIP_INDEX_URL" ]; then export PIP_INDEX_URL; else unset PIP_INDEX_URL; fi; \
     mkdir -p home; HOME="$d/home" KITELINE_HOME=/opt/kiteline bash Kiteline/install.sh --update; \
     cd /; rm -rf "$d"; chown -R dev /opt/kiteline; \
+    mkdir -p /usr/local/share/easycc; \
+    printf '{"id": "%s", "version": "%s"}\n' "$(date -u +%Y%m%d%H%M%S)-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')" \
+      "$(sed -n 's/^VERSION *= *"\(.*\)"/\1/p' /opt/kiteline/kiteline/app.py | head -1)" > /usr/local/share/easycc/kiteline-base; \
     printf '#!/bin/bash\nexport KITELINE_HOME=/opt/kiteline\ncd /opt/kiteline && exec /opt/kiteline/venv/bin/python -m kiteline "$@"\n' > /usr/local/bin/kiteline; \
     chmod 755 /usr/local/bin/kiteline
 
