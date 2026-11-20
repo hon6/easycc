@@ -463,14 +463,14 @@ footer .sp{flex:1}
       <div><p>macOS 26 起用系统自带的 Apple container，更早的系统用 App 自带的小虚拟机，不用另装 Docker。</p>
         <p>经过苹果公证，下载后拖进「应用程序」直接打开。</p></div>
       <div class="acts"><a class="btn solid" href="/dl/easyCC-0.9.3-mac-arm64.dmg">Apple 芯片版</a><a class="btn" href="/dl/easyCC-0.9.3-mac-intel.dmg">Intel 版</a></div></div>
-    <div class="plat"><h3>Windows<small>0.9.1 预览版，Windows 10 和 11</small></h3>
+    <div class="plat"><h3>Windows<small>0.9.3 预览版，Windows 10 和 11</small></h3>
       <div><p>使用系统自带的 WSL2，安装程序会自动配置。</p><p>解压后双击「安装 easyCC.cmd」。</p></div>
-      <div class="acts"><a class="btn solid" href="/dl/easycc-windows-x64-0.9.1.zip">下载 Windows 版</a></div></div>
-    <div class="plat"><h3>Linux<small>0.9.1，x86_64</small></h3>
+      <div class="acts"><a class="btn solid" href="/dl/easycc-windows-x64-0.9.3.zip">下载 Windows 版</a></div></div>
+    <div class="plat"><h3>Linux<small>0.9.3，x86_64</small></h3>
       <div><p>需要系统里已经装好 Docker 或 Podman。</p>
         <pre>tar xzf easycc-linux-*.tar.gz
 cd easycc-linux-* &amp;&amp; ./install.sh</pre></div>
-      <div class="acts"><a class="btn solid" href="/dl/easycc-linux-x86_64-0.9.1.tar.gz">下载 Linux 版</a></div></div>
+      <div class="acts"><a class="btn solid" href="/dl/easycc-linux-x86_64-0.9.3.tar.gz">下载 Linux 版</a></div></div>
   </div>
 </div></section>
 
@@ -507,8 +507,8 @@ cd easycc-linux-* &amp;&amp; ./install.sh</pre></div>
 (function(){
   var a=document.getElementById("heroDl"),p=((navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||"")+" "+navigator.userAgent;
   if(/iPhone|iPad|Android/i.test(p))return;
-  if(/Win/i.test(p)){a.textContent="下载 Windows 版";a.href="/dl/easycc-windows-x64-0.9.1.zip"}
-  else if(/Linux/i.test(p)){a.textContent="下载 Linux 版";a.href="/dl/easycc-linux-x86_64-0.9.1.tar.gz"}
+  if(/Win/i.test(p)){a.textContent="下载 Windows 版";a.href="/dl/easycc-windows-x64-0.9.3.zip"}
+  else if(/Linux/i.test(p)){a.textContent="下载 Linux 版";a.href="/dl/easycc-linux-x86_64-0.9.3.tar.gz"}
   else if(/Mac/i.test(p)){a.textContent="下载 macOS 版"}
 })();
 // 用法目录：滚到哪一节，哪一节亮
