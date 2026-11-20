@@ -67,8 +67,8 @@ use_app_runtime() {
   for a in "$ROOT/.." "/Applications/easyCC.app/Contents/Resources" "$HOME/Applications/easyCC.app/Contents/Resources"; do
     [ -x "$a/python/bin/python3" ] || [ -f "$a/runtime/container.pkg" ] || [ -x "$a/runtime/container/bin/container" ] || [ -x "$a/vm/easycc-vm" ] || continue
     APP_RT="$(cd "$a" && pwd)"
-    # Apple container：App 首次启动时把苹果的安装包解在「应用程序支持」目录里；0.9.2 以前直接在 App 包里
-    for c in "$HOME/Library/Application Support/easyCC/runtime/container" "$APP_RT/runtime/container"; do
+    # Apple container：App 首次启动时把苹果的安装包解到 ~/Library/Application Support/easyCC-runtime；0.9.2 以前直接在 App 包里
+    for c in "$HOME/Library/Application Support/easyCC-runtime/container" "$APP_RT/runtime/container"; do
       [ -x "$c/bin/container" ] && { APP_CT="$c"; PATH="$c/bin:$PATH"; break; }
     done
     [ -x "$APP_RT/vm/easycc-vm" ] && APP_VM="$APP_RT/vm"

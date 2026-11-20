@@ -298,7 +298,7 @@ footer .sp{flex:1}
     <div><dt>浏览器桌面</dt><dd>每个环境一个独立的 Firefox 或 Chrome，在网页里直接打开。和环境同一个出口，各环境的网站登录互不干扰。</dd></div>
     <div><dt>一键安装 Agent</dt><dd>Claude Code、Codex、Gemini CLI、Cursor CLI、Copilot CLI、opencode、Qwen Code、Kimi CLI。安装包从国内镜像取，装得快。</dd></div>
     <div><dt>VS Code 和 Cursor 直连</dt><dd>每个环境都开了 SSH。点一下按钮，本机的编辑器用 Remote-SSH 打开环境里的项目目录。</dd></div>
-    <div><dt>手机远程</dt><dd>环境里自带 Kiteline，扫码配对后在手机上看 Agent 跑到哪了、接着下指令。</dd></div>
+    <div><dt>手机远程</dt><dd>环境里自带 Kiteline，扫码配对后在手机上看 Agent 跑到哪了、接着下指令。Kiteline 出了新版本会自动更新。</dd></div>
     <div><dt>项目目录从电脑挂进来</dt><dd>代码一直在你自己的硬盘上。根目录下的项目可以在后台随时切换，不用重启。</dd></div>
     <div><dt>导出、导入、复制</dt><dd>环境打成一个文件，可以带上浏览器和 Agent 的登录状态，换一台电脑导入接着用。</dd></div>
     <div><dt>把链接送进环境</dt><dd>书签栏里放一个「发送到 easyCC」，看到链接点一下，选个环境的浏览器打开。</dd></div>
@@ -393,7 +393,8 @@ footer .sp{flex:1}
         <p>出门在外也能盯着 Agent 干活。</p>
         <div class="cols"><div><h4>有什么</h4><ul>
           <li>环境里自带 Kiteline，后台显示配对二维码和 6 位验证码</li><li>手机经中继连进来，同样走这个环境的出口</li>
-          <li>能看到 Agent 的实时输出，继续下指令、确认操作</li></ul></div>
+          <li>能看到 Agent 的实时输出，继续下指令、确认操作</li>
+          <li>Kiteline 出了新版本自动下载安装，等手机断开后重启生效；不想自动更新可以在后台关掉</li></ul></div>
           <div><h4>怎么做</h4><ol>
           <li>打开环境后台的「手机 · Kiteline」页</li><li>手机上打开 Kiteline，扫二维码或输入验证码</li><li>配对后就能在手机上看到环境里的会话</li></ol>
           <p class="note">Kiteline 目前只有 x86_64 版本。Apple 芯片的 Mac 上，带 Kiteline 的环境经 Rosetta 运行。</p></div></div>
@@ -425,7 +426,7 @@ footer .sp{flex:1}
         <div class="cols"><div><h4>各页做什么</h4><ul>
           <li><b>总览</b>：流量路径、出口 IP、检查评分</li><li><b>Agent</b>：安装、切换默认 Agent</li>
           <li><b>网络与代理</b>：每项检查的结果，在线换代理，暂停或恢复外网</li><li><b>项目目录</b>：浏览并切换当前项目</li>
-          <li><b>手机 · Kiteline</b>：配对二维码和验证码</li><li><b>维护</b>：一键重置环境，项目文件不动</li></ul></div>
+          <li><b>手机 · Kiteline</b>：配对二维码和验证码，版本和更新</li><li><b>维护</b>：一键重置环境，项目文件不动</li></ul></div>
           <div><h4>打开方式</h4><ol>
           <li>开发环境：点环境行里的后台按钮</li><li>浏览器环境：环境行菜单里的「环境后台」</li><li>命令行：<code>easycc admin us1</code></li></ol></div></div>
       </article>
@@ -458,10 +459,10 @@ footer .sp{flex:1}
 <section id="download"><div class="wrap">
   <div class="sec-head"><h2>下载</h2><p>完全免费，不用注册账号。</p></div>
   <div class="dl">
-    <div class="plat"><h3>macOS<small>0.9.2，macOS 12 及以上</small></h3>
+    <div class="plat"><h3>macOS<small>0.9.3，macOS 12 及以上</small></h3>
       <div><p>macOS 26 起用系统自带的 Apple container，更早的系统用 App 自带的小虚拟机，不用另装 Docker。</p>
-        <p>第一次打开如果提示「无法验证开发者」，到「系统设置 → 隐私与安全性」点「仍要打开」。</p></div>
-      <div class="acts"><a class="btn solid" href="/dl/easyCC-0.9.2-mac-arm64.dmg">Apple 芯片版</a><a class="btn" href="/dl/easyCC-0.9.2-mac-intel.dmg">Intel 版</a></div></div>
+        <p>经过苹果公证，下载后拖进「应用程序」直接打开。</p></div>
+      <div class="acts"><a class="btn solid" href="/dl/easyCC-0.9.3-mac-arm64.dmg">Apple 芯片版</a><a class="btn" href="/dl/easyCC-0.9.3-mac-intel.dmg">Intel 版</a></div></div>
     <div class="plat"><h3>Windows<small>0.9.1 预览版，Windows 10 和 11</small></h3>
       <div><p>使用系统自带的 WSL2，安装程序会自动配置。</p><p>解压后双击「安装 easyCC.cmd」。</p></div>
       <div class="acts"><a class="btn solid" href="/dl/easycc-windows-x64-0.9.1.zip">下载 Windows 版</a></div></div>

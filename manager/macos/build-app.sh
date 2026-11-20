@@ -120,20 +120,24 @@ echo "---- $(date '+%F %T') 启动 ${1:-}" >&2
 export LANG="${LANG:-en_US.UTF-8}"
 # Apple container 只在 macOS 26 + Apple 芯片上用；更早的系统用自带虚拟机（启动环境时才开）
 MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
-# 运行时放在「应用程序支持」目录里：App 包里带的是苹果的原版安装包，解出来的程序保持苹果的签名。
+# 运行时解到内置盘上的固定位置：App 包里带的是苹果的原版安装包，解出来的程序保持苹果的签名。
+# 不放进 $SUP：用户可能把数据（$SUP）挪到外置盘，而 container 的网络插件在外置盘上建不起虚拟网络（vmnet 1001，实测）。
 # 首次启动、或者 App 更新后带的安装包变了，就重新解一次（十来秒）。
-RT="$SUP/runtime/container"
+RT="$HOME/Library/Application Support/easyCC-runtime/container"
+# 停服务：服务卡住时 container system stop 会一直不返回，最多等 30 秒
+stop_rt() { [ -x "$1" ] || return 0; "$1" system stop >&2 & local p=$!; ( sleep 30; kill $p 2>/dev/null ) & local w=$!; wait $p; kill $w 2>/dev/null; }
+rm -rf "$SUP/runtime" 2>/dev/null       # 0.9.3 测试版解在这里过
 if [ -f "$R/runtime/container.pkg" ] && [ "$(uname -m)" = arm64 ] && [ "$MAJOR" -ge 26 ] \
    && [ "$(cat "$RT/.pkg-id" 2>/dev/null)" != "$(cat "$R/runtime/container.id" 2>/dev/null)" ]; then
   echo "解开容器运行时（首次启动或 App 更新后）" >&2
-  tmp="$SUP/runtime/.expand.$$"; rm -rf "$tmp" "$RT.new"; mkdir -p "$SUP/runtime"
+  tmp="$(dirname "$RT")/.expand.$$"; rm -rf "$tmp" "$RT.new"; mkdir -p "$(dirname "$RT")"
   if /usr/sbin/pkgutil --expand-full "$R/runtime/container.pkg" "$tmp" >&2 && [ -x "$tmp/Payload/bin/container" ]; then
     mv "$tmp/Payload" "$RT.new"
     rm -f "$RT.new/bin/uninstall-container.sh" "$RT.new/bin/update-container.sh"
     xattr -dr com.apple.quarantine "$RT.new" 2>/dev/null
     cp "$R/runtime/container.id" "$RT.new/.pkg-id"
     # 旧版本的服务还在跑：先停掉再换文件（运行中的环境会停，App 更新运行时才会走到这里）
-    [ -x "$RT/bin/container" ] && "$RT/bin/container" system stop >&2
+    stop_rt "$RT/bin/container"
     rm -rf "$RT"; mv "$RT.new" "$RT"
   else
     echo "容器运行时解包失败" >&2
@@ -146,11 +150,17 @@ C="$RT/bin/container"
 if [ -x "$C" ] && [ "$(uname -m)" = arm64 ] && [ "$MAJOR" -ge 26 ]; then
   # 服务是别的位置的程序注册的（0.9.2 以前运行时在 App 包里）：那些文件已经不在了，停掉，下面按现在的位置重新注册
   P="$SUP/container/apiserver/apiserver.plist"
-  if [ -f "$P" ] && [ "$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$P" 2>/dev/null)" != "$RT/bin/container-apiserver" ]; then
+  # 比较真实路径：数据目录可能是指向外置盘的软链接，服务登记的是解析后的路径
+  if [ -f "$P" ] && [ "$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$P" 2>/dev/null)" != "$(cd "$RT/bin" && pwd -P)/container-apiserver" ]; then
     echo "容器服务注册的是旧位置，重新注册" >&2
-    "$C" system stop >&2
-    launchctl bootout "user/$(id -u)/com.apple.container.apiserver" 2>/dev/null
-    launchctl bootout "gui/$(id -u)/com.apple.container.apiserver" 2>/dev/null
+    stop_rt "$C"
+    # 旧版在两个域里都可能留着服务（apiserver 和它拉起的网络、镜像等辅助服务），程序文件已经不在了：全部注销
+    for l in $(launchctl list | awk '{print $3}' | grep '^com\.apple\.container\.'); do launchctl remove "$l" 2>/dev/null; done
+    for dom in user gui; do
+      for l in $(launchctl print "$dom/$(id -u)" 2>/dev/null | grep -oE 'com\.apple\.container\.[A-Za-z0-9._-]+' | sort -u); do
+        launchctl bootout "$dom/$(id -u)/$l" 2>/dev/null
+      done
+    done
     rm -f "$P"
   fi
   if ! "$C" system status >/dev/null 2>&1; then
@@ -161,8 +171,20 @@ if [ -x "$C" ] && [ "$(uname -m)" = arm64 ] && [ "$MAJOR" -ge 26 ]; then
       for i in 1 2 3 4 5 6 7 8 9 10; do "$C" system status >/dev/null 2>&1 && break; sleep 1; done
     fi
     # 第一次用（还没有 plist），或者上面没起来：让 container 自己装，它会写好 plist 并补齐其余服务
+    # 自带的 --timeout 在服务起不来时不管用，自己看着：最多等 90 秒
     "$C" system start --install-root "$RT" --app-root "$SUP/container" --log-root "$SUP/logs" \
-      --disable-kernel-install --timeout 90 >&2 || echo "容器运行时启动失败" >&2
+      --disable-kernel-install --timeout 90 >&2 & sp=$!
+    ( sleep 90; kill $sp 2>/dev/null ) & wdp=$!
+    wait $sp || echo "容器运行时启动失败" >&2
+    kill $wdp 2>/dev/null
+    # container 自己注册的服务在图形会话域：存储位置在外置盘时那里读写不了，改注册到用户域
+    if ! "$C" system status >/dev/null 2>&1 && [ -f "$P" ]; then
+      echo "改到用户域重新注册容器服务" >&2
+      launchctl bootout "gui/$(id -u)/com.apple.container.apiserver" 2>/dev/null
+      launchctl bootstrap "user/$(id -u)" "$P" 2>/dev/null
+      for i in $(seq 1 45); do "$C" system status >/dev/null 2>&1 && break; sleep 1; done
+      "$C" system status >/dev/null 2>&1 || echo "容器运行时启动失败" >&2
+    fi
   fi
   # 内核：已经装过会报「已存在」，忽略
   "$C" system kernel set --binary "$R/runtime/kernel/vmlinux" >/dev/null 2>&1 || true
